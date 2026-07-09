@@ -2,11 +2,13 @@ from functools import lru_cache
 
 from sqlmodel import SQLModel, Session, create_engine
 
-from app.core.settings import Settings, settings
+from app.core.settings import Settings
 
 
 @lru_cache(maxsize=1)
 def get_engine():
+    settings = Settings()
+
     return create_engine(
         settings.database_url,
         connect_args={"check_same_thread": False},

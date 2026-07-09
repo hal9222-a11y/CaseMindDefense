@@ -1,15 +1,21 @@
+from __future__ import annotations
+
 from pathlib import Path
 from shutil import which
 import os
+
+from PIL import Image
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
-from PIL import Image
 import pytesseract
 
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+
 
 class TextExtractionError(Exception):
     pass
+
 
 def _configure_tesseract() -> None:
     candidates = [
@@ -18,15 +24,19 @@ def _configure_tesseract() -> None:
         r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
         which("tesseract"),
     ]
+
     for candidate in candidates:
         if candidate and Path(candidate).exists():
             pytesseract.pytesseract.tesseract_cmd = str(candidate)
             return
 
+
 _configure_tesseract()
+
 
 def _is_image(path: Path) -> bool:
     return path.suffix.lower() in IMAGE_EXTENSIONS
+
 
 def _extract_image_text(path: Path) -> str:
     try:
@@ -35,50 +45,75 @@ def _extract_image_text(path: Path) -> str:
     except Exception as exc:
         raise TextExtractionError(f"OCR text extraction failed: {exc}") from exc
 
+
+def _extract_pdf_text(path: Path) -> str:
+    try:
+        reader = PdfReader(str(path))
+        page_texts = [(page.extract_text() or "") for page in reader.pages]
+        return "\n".join(page_texts).strip()
+    except (PdfReadError, ValueError, OSError, KeyError) as exc:
+        raise TextExtractionError(f"PDF text extraction failed: {exc}") from exc
+
+
 def extract_text(path: Path) -> str:
     suffix = path.suffix.lower()
+
     if suffix == ".txt":
         return path.read_text(encoding="utf-8", errors="ignore").strip()
+
     if suffix == ".pdf":
-        try:
-            reader = PdfReader(str(path))
-            return "\\n".join(page.extract_text() or "" for page in reader.pages).strip()
-        except (PdfReadError, ValueError, OSError, KeyError) as exc:
-            raise TextExtractionError(f"PDF text extraction failed: {exc}") from exc
+        return _extract_pdf_text(path)
+
     if _is_image(path):
         return _extract_image_text(path)
+
     return ""
 
-def chunk_text(text: str, chunk_size: int = 1200, overlap: int = 150) -> list[str]:
-    cleaned = (text or "").strip()
-    if not cleaned:
-        return []
-    chunks = []
-    start = 0
-    length = len(cleaned)
-    while start < length:
-        end = min(start + chunk_size, length)
-        chunk = cleaned[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        if end == length:
-            break
-        start = max(0, end - overlap)
-    return chunks
 
-def chunk_text_with_offsets(text: str, chunk_size: int = 1200, overlap: int = 150) -> list[dict]:
-    cleaned = (text or "").strip()
-    if not cleaned:
+def chunk_text(text: str, chunk_size: int = 1200, overlap: int = 150) -> list[str]:
+    return [chunk["text"] for chunk in chunk_text_with_offsets(text, chunk_size, overlap)]
+
+
+def chunk_text_with_offsets(
+    text: str,
+    chunk_size: int = 1200,
+    overlap: int = 150,
+) -> list[dict]:
+    original = text or ""
+
+    if not original.strip():
         return []
-    chunks = []
+
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than zero")
+
+    if overlap < 0:
+        raise ValueError("overlap must be non-negative")
+
+    if overlap >= chunk_size:
+        raise ValueError("overlap must be smaller than chunk_size")
+
+    chunks: list[dict] = []
     start = 0
-    length = len(cleaned)
+    length = len(original)
+
     while start < length:
         end = min(start + chunk_size, length)
-        chunk = cleaned[start:end].strip()
-        if chunk:
-            chunks.append({"text": chunk, "start_char": start, "end_char": end, "source_location": f"chars:{start}-{end}"})
+        chunk = original[start:end]
+
+        if chunk.strip():
+            chunks.append(
+                {
+                    "text": chunk,
+                    "start_char": start,
+                    "end_char": end,
+                    "source_location": f"chars:{start}-{end}",
+                }
+            )
+
         if end == length:
             break
+
         start = max(0, end - overlap)
+
     return chunks

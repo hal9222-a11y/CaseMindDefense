@@ -1,9 +1,12 @@
 from datetime import datetime, timezone
 from typing import Optional
+
 from sqlmodel import Field, SQLModel
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
 
 class Evidence(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -16,6 +19,7 @@ class Evidence(SQLModel, table=True):
     imported_at: datetime = Field(default_factory=utcnow)
     status: str = "imported"
 
+
 class EvidenceChunk(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     evidence_id: int = Field(index=True)
@@ -23,6 +27,7 @@ class EvidenceChunk(SQLModel, table=True):
     text: str
     source_location: str = ""
     embedding: str = ""
+
 
 class AuditEvent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)

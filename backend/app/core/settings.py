@@ -20,4 +20,5 @@ class Settings(BaseModel):
     )
 
 
-settings = Settings()
+def get_settings() -> Settings:
+    return Settings()

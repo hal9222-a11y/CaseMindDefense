@@ -2,7 +2,7 @@ import mimetypes
 import shutil
 from pathlib import Path
 from sqlmodel import Session, select
-from app.core.settings import settings
+from app.core.settings import get_settings
 from app.models.evidence import Evidence, EvidenceChunk
 from app.services.audit_service import log_event
 from app.services.embedding_service import embed_text, serialize_embedding
@@ -26,7 +26,7 @@ def import_file(session: Session, source_path: str) -> Evidence:
     if existing:
         raise DuplicateEvidenceError(existing.id or -1)
 
-    store_dir = settings.evidence_store_dir
+    store_dir = get_settings().evidence_store_dir
     store_dir.mkdir(parents=True, exist_ok=True)
     stored = store_dir / f"{digest}{src.suffix.lower()}"
     if not stored.exists():
