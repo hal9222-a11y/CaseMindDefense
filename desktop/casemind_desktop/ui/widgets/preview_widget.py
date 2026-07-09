@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QLabel,
     QScrollArea,
@@ -29,6 +29,7 @@ class PreviewWidget(QWidget):
         super().__init__()
         self.api = api
         self._current_id: int | None = None
+        self._highlight: str | None = None
 
         self._text_view = QTextEdit()
         self._text_view.setReadOnly(True)
@@ -53,8 +54,9 @@ class PreviewWidget(QWidget):
         layout.addWidget(self._stack)
         self.setLayout(layout)
 
-    def show_evidence(self, item: dict[str, Any]) -> None:
+    def show_evidence(self, item: dict[str, Any], highlight: str | None = None) -> None:
         self._current_id = item.get("id")
+        self._highlight = highlight
         mime = item.get("mime_type") or ""
 
         if mime.startswith("text/"):
@@ -68,9 +70,18 @@ class PreviewWidget(QWidget):
         elif mime.startswith(IMAGE_MIME_PREFIX):
             self._show_image(item)
         elif mime == "application/pdf":
-            self._show_message(
-                f"PDF preview is coming in a later sprint.\n\n{item.get('filename', '')}"
-            )
+            if highlight:
+                # no PDF rendering yet, but the cited chunk itself is available
+                self._text_view.setPlainText(
+                    "[Cited excerpt — full PDF preview coming in a later sprint]\n\n"
+                    f"{highlight}"
+                )
+                self._stack.setCurrentIndex(1)
+                self._highlight = None
+            else:
+                self._show_message(
+                    f"PDF preview is coming in a later sprint.\n\n{item.get('filename', '')}"
+                )
         else:
             self._show_message(f"No preview available for type: {mime or 'unknown'}")
 
@@ -79,6 +90,12 @@ class PreviewWidget(QWidget):
             return  # a different row was selected while this request was in flight
         self._text_view.setPlainText(payload.get("text", ""))
         self._stack.setCurrentIndex(1)
+        if self._highlight:
+            # scroll to and select the cited chunk (first ~60 chars is enough
+            # to locate it and keeps QTextEdit.find fast)
+            self._text_view.moveCursor(QTextCursor.Start)
+            self._text_view.find(self._highlight[:60].strip())
+            self._highlight = None
 
     def _show_image(self, item: dict[str, Any]) -> None:
         stored = Path(item.get("stored_path", ""))

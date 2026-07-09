@@ -48,6 +48,13 @@ class EvidenceTableWidget(QTableWidget):
         if 0 <= row < len(self._items):
             self.evidence_selected.emit(self._items[row])
 
+    def select_by_id(self, evidence_id: int) -> bool:
+        for row, item in enumerate(self._items):
+            if item.get("id") == evidence_id:
+                self.selectRow(row)
+                return True
+        return False
+
     @staticmethod
     def _short_hash(value: str) -> str:
         return f"{value[:16]}..." if value else ""

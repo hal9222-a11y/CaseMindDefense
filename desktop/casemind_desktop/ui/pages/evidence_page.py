@@ -43,8 +43,10 @@ class EvidencePage(QWidget):
         self.toolbar.refresh_clicked.connect(self._refresh)
         self.toolbar.import_clicked.connect(self._pick_and_import)
 
-        self.table.evidence_selected.connect(self.preview.show_evidence)
-        self.table.evidence_selected.connect(self.inspector.show_evidence)
+        self._pending_highlight: str | None = None
+        self._pending_focus_id: int | None = None
+
+        self.table.evidence_selected.connect(self._on_evidence_selected)
 
         self.controller.evidence_loaded.connect(self._on_loaded)
         self.controller.load_failed.connect(self._on_load_failed)
@@ -83,9 +85,31 @@ class EvidencePage(QWidget):
         self.toolbar.set_busy(True)
         self.controller.import_file(file_path)
 
+    def _on_evidence_selected(self, item: dict[str, Any]) -> None:
+        self.preview.show_evidence(item, highlight=self._pending_highlight)
+        self.inspector.show_evidence(item)
+        self._pending_highlight = None
+
+    def focus_evidence(self, evidence_id: int, snippet: str | None = None) -> None:
+        """Citation navigation: select the evidence row and highlight the
+        cited chunk in the preview. Reloads the list first if the row is
+        not present yet."""
+        self._pending_highlight = snippet
+        if not self.table.select_by_id(evidence_id):
+            self._pending_focus_id = evidence_id
+            self._refresh()
+
     def _on_loaded(self, items: list[dict[str, Any]]) -> None:
         self.toolbar.set_busy(False)
         self.table.set_items(items)
+        if self._pending_focus_id is not None:
+            found = self.table.select_by_id(self._pending_focus_id)
+            self._pending_focus_id = None
+            if not found:
+                self._pending_highlight = None
+                QMessageBox.information(
+                    self, "Not Found", "The cited evidence is not in the list."
+                )
 
     def _on_load_failed(self, error: str) -> None:
         self.toolbar.set_busy(False)
