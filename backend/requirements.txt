@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+sqlmodel
+pypdf
+pillow
+pytesseract
+httpx
+pytest
+sentence-transformers
+pydantic
