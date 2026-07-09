@@ -37,21 +37,33 @@ def _normalize_date(raw: str) -> str | None:
     return None
 
 
+SNIPPET_RADIUS = 150  # chars of context on each side of the matched date
+
+
+def _snippet(text: str, start: int, end: int) -> str:
+    left = max(0, start - SNIPPET_RADIUS)
+    right = min(len(text), end + SNIPPET_RADIUS)
+    prefix = "..." if left > 0 else ""
+    suffix = "..." if right < len(text) else ""
+    return f"{prefix}{text[left:right]}{suffix}"
+
+
 def build_timeline(session: Session) -> list[dict]:
     events: list[dict] = []
 
     for chunk in session.exec(select(EvidenceChunk)).all():
-        for raw_date in DATE_RE.findall(chunk.text or ""):
-            normalized = _normalize_date(raw_date)
+        text = chunk.text or ""
+        for match in DATE_RE.finditer(text):
+            raw_date = match.group(1)
 
             events.append(
                 {
                     "date": raw_date,
-                    "normalized_date": normalized,
+                    "normalized_date": _normalize_date(raw_date),
                     "evidence_id": chunk.evidence_id,
                     "chunk_index": chunk.chunk_index,
                     "source_location": chunk.source_location,
-                    "text": chunk.text,
+                    "text": _snippet(text, match.start(), match.end()),
                 }
             )
 

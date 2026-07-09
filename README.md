@@ -1,28 +1,27 @@
-# CaseMind Defense v0.10-alpha Recovery
+# CaseMind Defense
 
-This package recreates the current CaseMind Defense project after data loss.
+Local-first **Investigation Intelligence Platform** — secure evidence management with automatic analysis, OCR (Hebrew + English), semantic search, and evidence-grounded AI answers with exact citations.
 
-## Includes
+Built for defense lawyers, investigators, and enforcement teams. All data stays on your machine.
 
-- FastAPI backend
-- SQLModel + SQLite
-- Evidence import by file/folder path
-- SHA256 duplicate detection
-- Audit log
-- TXT/PDF text extraction
-- Image OCR via Tesseract/pytesseract
-- Chunking with `chars:start-end` citation offsets
-- Sentence Transformers embeddings with deterministic fallback
-- Semantic Search endpoint
-- AI Ask endpoint with evidence citations
-- Entities / Timeline / Contradictions endpoints
-- PySide6 Desktop client
-- Test suite
+- 📖 [Vision](docs/VISION.md) · [Architecture](ARCHITECTURE.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
+- 🔨 Current sprint: [0.12.1 — Desktop Workspace](docs/SPRINT_0.12.1_DESKTOP_WORKSPACE.md)
 
-## Install Backend
+## Features
+
+- Evidence import (files/folders) with SHA256 duplicate detection and content-addressed storage
+- Full audit trail (chain of custody)
+- Text extraction: TXT, PDF (native text layer), scanned PDFs and images via Tesseract OCR (`eng+heb`)
+- Chunking with exact `chars:start-end` citation offsets
+- Semantic search (SentenceTransformers) + keyword search
+- AI Ask endpoint answering only from stored evidence, with citations
+- Entities, timeline, and contradiction endpoints
+- PySide6 desktop client
+
+## Backend — install & run
 
 ```powershell
-cd E:\WORK-FOLD\CaseMindDefense\backend
+cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
@@ -30,12 +29,26 @@ pytest
 python -m uvicorn app.main:app --reload
 ```
 
-## Install Desktop
+Requires [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) with the `heb` language pack (auto-detected; override with `TESSERACT_CMD`).
+
+## Desktop — install & run
 
 ```powershell
-cd E:\WORK-FOLD\CaseMindDefense\desktop
+cd desktop
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 python -m casemind_desktop.main
 ```
+
+## Configuration (env vars)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `CASEMIND_DATABASE_URL` | `sqlite:///./casemind_defense.db` | Backend database |
+| `CASEMIND_EVIDENCE_STORE` | `./data/evidence_store` | Evidence file store |
+| `CASEMIND_EMBEDDING_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Embedding model |
+| `CASEMIND_PDF_OCR_MAX_PAGES` | `50` | OCR page cap per scanned PDF |
+| `CASEMIND_BACKEND_URL` | `http://127.0.0.1:8000` | Desktop → backend URL |
+
+> ⚠️ The backend has no authentication yet — keep it bound to `127.0.0.1`.
