@@ -3,18 +3,17 @@ from PySide6.QtWidgets import (
     QListWidget,
     QMainWindow,
     QStackedWidget,
-    QStatusBar,
     QWidget,
 )
 
 from api.client import ApiClient
 from config.settings import APP_NAME, APP_VERSION
-from workers.api_worker import run_async
 from ui.pages.ai_page import AIPage
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.evidence_page import EvidencePage
 from ui.pages.placeholder_page import PlaceholderPage
 from ui.pages.search_page import SearchPage
+from ui.widgets.status_bar_widget import StatusBarWidget
 
 
 class MainWindow(QMainWindow):
@@ -41,9 +40,11 @@ class MainWindow(QMainWindow):
             ]
         )
 
+        self.status = StatusBarWidget(self.api)
+
         self.pages = QStackedWidget()
-        self.pages.addWidget(DashboardPage(self.check_backend))
-        self.pages.addWidget(EvidencePage())
+        self.pages.addWidget(DashboardPage(self.status.check_backend))
+        self.pages.addWidget(EvidencePage(self.api))
         self.pages.addWidget(SearchPage())
         self.pages.addWidget(AIPage())
         self.pages.addWidget(PlaceholderPage("Timeline", "Investigation timeline will live here."))
@@ -63,22 +64,10 @@ class MainWindow(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
 
-        self.status = QStatusBar()
         self.setStatusBar(self.status)
-        self.status.showMessage("Checking backend...")
 
         self.apply_dark_theme()
-        self.check_backend()
-
-    def check_backend(self) -> None:
-        self.status.showMessage("Checking backend...")
-        run_async(self.api.health, on_done=self._on_health_result)
-
-    def _on_health_result(self, result: dict) -> None:
-        if result.get("ok"):
-            self.status.showMessage("🟢 Backend Connected")
-        else:
-            self.status.showMessage(f"🔴 Backend Offline - {result.get('error', '')}")
+        self.status.check_backend()
 
     def apply_dark_theme(self) -> None:
         self.setStyleSheet(
