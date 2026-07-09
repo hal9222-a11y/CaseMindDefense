@@ -41,3 +41,6 @@ htmlcov/
 # Build
 dist/
 build/
+
+# Claude local settings
+.claude/
