@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install Tesseract (eng + heb)
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-heb
+
+      # sentence-transformers pulls torch (~GBs); the deterministic hash
+      # fallback covers the embedding path in tests
+      - name: Install dependencies (without heavy ML stack)
+        run: grep -viE '^sentence-transformers' requirements.txt | pip install -r /dev/stdin
+
+      - name: Run tests
+        run: python -m pytest -q
+
+  desktop-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile-check desktop sources
+        run: python -m compileall -q desktop/casemind_desktop

@@ -5,44 +5,37 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from api.client import ApiClient
+from ui.widgets.results_table_widget import ResultsTableWidget
 from workers.api_worker import run_async
 
 
 class SearchPage(QWidget):
-    def __init__(self) -> None:
+    def __init__(self, api: ApiClient | None = None) -> None:
         super().__init__()
 
-        self.api = ApiClient()
+        self.api = api or ApiClient()
 
         self.query_input = QLineEdit()
         self.query_input.setPlaceholderText("Search evidence semantically...")
+        self.query_input.returnPressed.connect(self.run_search)
 
         self.search_button = QPushButton("Search")
         self.search_button.clicked.connect(self.run_search)
+
+        self.results = ResultsTableWidget()
 
         top_bar = QHBoxLayout()
         top_bar.addWidget(self.query_input)
         top_bar.addWidget(self.search_button)
 
-        self.table = QTableWidget()
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(
-            ["Filename", "Score", "Evidence ID", "Chunk", "Source", "Text"]
-        )
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-
         layout = QVBoxLayout()
         layout.addLayout(top_bar)
-        layout.addWidget(self.table)
-
+        layout.addWidget(self.results)
         self.setLayout(layout)
 
     def run_search(self) -> None:
@@ -55,27 +48,13 @@ class SearchPage(QWidget):
             self.api.semantic_search,
             query,
             on_done=self._on_results,
-            on_error=self._on_search_failed,
+            on_error=self._on_failed,
         )
 
     def _on_results(self, results: list[dict]) -> None:
         self.search_button.setEnabled(True)
-        self.table.setRowCount(len(results))
+        self.results.set_results(results)
 
-        for row, item in enumerate(results):
-            values = [
-                item.get("filename", ""),
-                f'{item.get("score", "")}',
-                str(item.get("evidence_id", "")),
-                str(item.get("chunk_index", "")),
-                item.get("source_location", ""),
-                item.get("text", ""),
-            ]
-            for col, value in enumerate(values):
-                self.table.setItem(row, col, QTableWidgetItem(value))
-
-        self.table.resizeColumnsToContents()
-
-    def _on_search_failed(self, error: str) -> None:
+    def _on_failed(self, error: str) -> None:
         self.search_button.setEnabled(True)
         QMessageBox.critical(self, "Search Failed", error)

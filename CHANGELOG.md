@@ -2,6 +2,12 @@
 
 ## Unreleased (sprint 0.12.1 — Desktop Workspace)
 
+- Search and AI pages rebuilt on the widget pattern with a shared results
+  table (`ResultsTableWidget`) — ready for citation navigation in 0.12.2;
+  AI page now shows answer and citations in separate panes; Enter runs search
+- GitHub Actions CI: backend tests (with Hebrew Tesseract) + desktop
+  compile check on every push
+
 - **Hebrew PDFs extract correctly**: PDF text extraction moved from pypdf (dropped Hebrew glyphs entirely) to pypdfium2, with automatic visual-vs-logical order detection (final-letter heuristic) and bidi correction only when needed — verified against a real court document and a generated visual-order PDF
 - **Desktop no longer freezes**: all API calls (health check, evidence load, import, semantic search, AI ask) run on background workers; buttons disable during in-flight requests
 
