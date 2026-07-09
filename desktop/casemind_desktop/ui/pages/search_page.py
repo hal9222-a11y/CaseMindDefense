@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from api.client import ApiClient
+from workers.api_worker import run_async
 
 
 class SearchPage(QWidget):
@@ -49,23 +50,32 @@ class SearchPage(QWidget):
         if not query:
             return
 
-        try:
-            results = self.api.semantic_search(query)
-            self.table.setRowCount(len(results))
+        self.search_button.setEnabled(False)
+        run_async(
+            self.api.semantic_search,
+            query,
+            on_done=self._on_results,
+            on_error=self._on_search_failed,
+        )
 
-            for row, item in enumerate(results):
-                values = [
-                    item.get("filename", ""),
-                    f'{item.get("score", "")}',
-                    str(item.get("evidence_id", "")),
-                    str(item.get("chunk_index", "")),
-                    item.get("source_location", ""),
-                    item.get("text", ""),
-                ]
-                for col, value in enumerate(values):
-                    self.table.setItem(row, col, QTableWidgetItem(value))
+    def _on_results(self, results: list[dict]) -> None:
+        self.search_button.setEnabled(True)
+        self.table.setRowCount(len(results))
 
-            self.table.resizeColumnsToContents()
+        for row, item in enumerate(results):
+            values = [
+                item.get("filename", ""),
+                f'{item.get("score", "")}',
+                str(item.get("evidence_id", "")),
+                str(item.get("chunk_index", "")),
+                item.get("source_location", ""),
+                item.get("text", ""),
+            ]
+            for col, value in enumerate(values):
+                self.table.setItem(row, col, QTableWidgetItem(value))
 
-        except Exception as exc:
-            QMessageBox.critical(self, "Search Failed", str(exc))
+        self.table.resizeColumnsToContents()
+
+    def _on_search_failed(self, error: str) -> None:
+        self.search_button.setEnabled(True)
+        QMessageBox.critical(self, "Search Failed", error)

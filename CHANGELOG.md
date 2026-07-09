@@ -2,6 +2,9 @@
 
 ## Unreleased (sprint 0.12.1 — Desktop Workspace)
 
+- **Hebrew PDFs extract correctly**: PDF text extraction moved from pypdf (dropped Hebrew glyphs entirely) to pypdfium2, with automatic visual-vs-logical order detection (final-letter heuristic) and bidi correction only when needed — verified against a real court document and a generated visual-order PDF
+- **Desktop no longer freezes**: all API calls (health check, evidence load, import, semantic search, AI ask) run on background workers; buttons disable during in-flight requests
+
 - Removed dead duplicate desktop API client (`api_client.py`)
 - `/ai/ask` accepts `limit` (1–20, default 5)
 - Text search runs in SQL (LIKE) instead of scanning all chunks in memory

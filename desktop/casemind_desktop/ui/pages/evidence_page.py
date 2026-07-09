@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from api.client import ApiClient
+from workers.api_worker import run_async
 
 
 class EvidencePage(QWidget):
@@ -89,53 +90,71 @@ class EvidencePage(QWidget):
         self.load_evidence()
 
     def load_evidence(self) -> None:
-        try:
-            self.evidence_items = self.api.list_evidence()
-            self.table.setRowCount(len(self.evidence_items))
+        self.refresh_button.setEnabled(False)
+        run_async(
+            self.api.list_evidence,
+            on_done=self._on_evidence_loaded,
+            on_error=self._on_load_failed,
+        )
 
-            for row, item in enumerate(self.evidence_items):
-                values = [
-                    str(item.get("id", "")),
-                    item.get("filename", ""),
-                    item.get("mime_type", ""),
-                    str(item.get("size_bytes", "")),
-                    item.get("status", ""),
-                    item.get("imported_at", ""),
-                    self._short_hash(item.get("sha256", "")),
-                ]
+    def _on_evidence_loaded(self, items: list[dict[str, Any]]) -> None:
+        self.refresh_button.setEnabled(True)
+        self.evidence_items = items
+        self.table.setRowCount(len(self.evidence_items))
 
-                for col, value in enumerate(values):
-                    table_item = QTableWidgetItem(value)
-                    table_item.setToolTip(value)
-                    self.table.setItem(row, col, table_item)
+        for row, item in enumerate(self.evidence_items):
+            values = [
+                str(item.get("id", "")),
+                item.get("filename", ""),
+                item.get("mime_type", ""),
+                str(item.get("size_bytes", "")),
+                item.get("status", ""),
+                item.get("imported_at", ""),
+                self._short_hash(item.get("sha256", "")),
+            ]
 
-            self.table.resizeColumnsToContents()
+            for col, value in enumerate(values):
+                table_item = QTableWidgetItem(value)
+                table_item.setToolTip(value)
+                self.table.setItem(row, col, table_item)
 
-        except Exception as exc:
-            QMessageBox.critical(self, "Evidence Load Failed", str(exc))
+        self.table.resizeColumnsToContents()
+
+    def _on_load_failed(self, error: str) -> None:
+        self.refresh_button.setEnabled(True)
+        QMessageBox.critical(self, "Evidence Load Failed", error)
 
     def import_evidence(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Import Evidence",
             "",
-            "Evidence Files (*.txt *.pdf *.png *.jpg *.jpeg *.bmp *.tiff *.webp);;All Files (*)",
+            "Evidence Files (*.txt *.pdf *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp);;All Files (*)",
         )
 
         if not file_path:
             return
 
-        try:
-            self.api.import_evidence_file(file_path)
-            self.load_evidence()
-            QMessageBox.information(
-                self,
-                "Import Complete",
-                "Evidence imported successfully.",
-            )
+        self.import_button.setEnabled(False)
+        run_async(
+            self.api.import_evidence_file,
+            file_path,
+            on_done=self._on_import_done,
+            on_error=self._on_import_failed,
+        )
 
-        except Exception as exc:
-            QMessageBox.critical(self, "Import Failed", str(exc))
+    def _on_import_done(self, _result: dict[str, Any]) -> None:
+        self.import_button.setEnabled(True)
+        self.load_evidence()
+        QMessageBox.information(
+            self,
+            "Import Complete",
+            "Evidence imported successfully.",
+        )
+
+    def _on_import_failed(self, error: str) -> None:
+        self.import_button.setEnabled(True)
+        QMessageBox.critical(self, "Import Failed", error)
 
     def on_selection_changed(self) -> None:
         row = self.table.currentRow()

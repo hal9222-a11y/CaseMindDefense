@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from api.client import ApiClient
+from workers.api_worker import run_async
 
 
 class AIPage(QWidget):
@@ -43,11 +44,23 @@ class AIPage(QWidget):
         if not question:
             return
 
-        try:
-            result = self.api.ask_ai(question)
-            self.answer_output.setPlainText(self._format_answer(result))
-        except Exception as exc:
-            QMessageBox.critical(self, "AI Ask Failed", str(exc))
+        self.ask_button.setEnabled(False)
+        self.answer_output.clear()
+        self.answer_output.setPlaceholderText("Searching evidence...")
+        run_async(
+            self.api.ask_ai,
+            question,
+            on_done=self._on_answer,
+            on_error=self._on_ask_failed,
+        )
+
+    def _on_answer(self, result: dict) -> None:
+        self.ask_button.setEnabled(True)
+        self.answer_output.setPlainText(self._format_answer(result))
+
+    def _on_ask_failed(self, error: str) -> None:
+        self.ask_button.setEnabled(True)
+        QMessageBox.critical(self, "AI Ask Failed", error)
 
     @staticmethod
     def _format_answer(result: dict) -> str:

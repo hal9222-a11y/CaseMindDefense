@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 
 from api.client import ApiClient
 from config.settings import APP_NAME, APP_VERSION
+from workers.api_worker import run_async
 from ui.pages.ai_page import AIPage
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.evidence_page import EvidencePage
@@ -70,7 +71,10 @@ class MainWindow(QMainWindow):
         self.check_backend()
 
     def check_backend(self) -> None:
-        result = self.api.health()
+        self.status.showMessage("Checking backend...")
+        run_async(self.api.health, on_done=self._on_health_result)
+
+    def _on_health_result(self, result: dict) -> None:
         if result.get("ok"):
             self.status.showMessage("🟢 Backend Connected")
         else:
