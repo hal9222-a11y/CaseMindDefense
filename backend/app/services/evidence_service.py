@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from app.core.settings import get_settings
 from app.models.evidence import Evidence, EvidenceChunk
 from app.services.audit_service import log_event
-from app.services.embedding_service import embed_text, serialize_embedding
+from app.services.embedding_service import embed_text, embedding_model_name, serialize_embedding
 from app.services.hash_service import sha256_file
 from app.services.text_service import TextExtractionError, chunk_text_with_offsets, extract_text
 
@@ -48,7 +48,7 @@ def import_file(session: Session, source_path: str) -> Evidence:
     log_event(session, "evidence_imported", evidence_id=evidence.id, original_path=str(src), stored_path=str(stored), sha256=digest)
 
     try:
-        text = extract_text(src)
+        text, extraction_method = extract_text(src)
     except TextExtractionError as exc:
         evidence.status = "text_extraction_failed"
         session.add(evidence)
@@ -59,19 +59,27 @@ def import_file(session: Session, source_path: str) -> Evidence:
 
     chunks = chunk_text_with_offsets(text)
     for idx, chunk_data in enumerate(chunks):
-        chunk_text = (chunk_data.get("text") or "").strip()
-        if not chunk_text:
+        chunk_text = chunk_data.get("text") or ""
+        if not chunk_text.strip():
             continue
+        vec = embed_text(chunk_text)
         ev_chunk = EvidenceChunk(
             evidence_id=evidence.id,
             chunk_index=idx,
             text=chunk_text,
             source_location=chunk_data.get("source_location") or f"chunk:{idx}",
-            embedding=serialize_embedding(embed_text(chunk_text)),
+            embedding=serialize_embedding(vec),
+            embedding_model=embedding_model_name(),
+            embedding_dimension=len(vec),
         )
         session.add(ev_chunk)
 
-    evidence.status = "indexed" if chunks else "no_text_found"
+    if chunks:
+        evidence.status = "ocr_indexed" if extraction_method == "ocr" else "indexed"
+    elif extraction_method == "unsupported":
+        evidence.status = "extraction_not_supported"
+    else:
+        evidence.status = "no_text_found"
     session.add(evidence)
     session.commit()
     session.refresh(evidence)

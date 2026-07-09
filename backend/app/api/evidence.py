@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -24,8 +24,14 @@ class ImportFolderRequest(BaseModel):
 
 
 @router.get("")
-def list_evidence(session: Session = Depends(get_session)):
-    return session.exec(select(Evidence)).all()
+def list_evidence(
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    session: Session = Depends(get_session),
+):
+    return session.exec(
+        select(Evidence).order_by(Evidence.id).offset(offset).limit(limit)
+    ).all()
 
 
 @router.post("/import-file")

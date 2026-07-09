@@ -12,6 +12,9 @@ import pytesseract
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
+OCR_LANGS = "eng+heb"
+PDF_OCR_RENDER_SCALE = 2.0  # ~144 dpi; raise if OCR quality is poor on small print
+
 
 class TextExtractionError(Exception):
     pass
@@ -41,9 +44,27 @@ def _is_image(path: Path) -> bool:
 def _extract_image_text(path: Path) -> str:
     try:
         with Image.open(path) as image:
-            return pytesseract.image_to_string(image, lang="eng+heb").strip()
+            return pytesseract.image_to_string(image, lang=OCR_LANGS).strip()
     except Exception as exc:
         raise TextExtractionError(f"OCR text extraction failed: {exc}") from exc
+
+
+def _ocr_pdf(path: Path) -> str:
+    """Render PDF pages to images and OCR them (fallback for scanned PDFs)."""
+    try:
+        import pypdfium2 as pdfium
+
+        pdf = pdfium.PdfDocument(str(path))
+        try:
+            page_texts = []
+            for page in pdf:
+                image = page.render(scale=PDF_OCR_RENDER_SCALE).to_pil()
+                page_texts.append(pytesseract.image_to_string(image, lang=OCR_LANGS))
+            return "\n".join(page_texts).strip()
+        finally:
+            pdf.close()
+    except Exception as exc:
+        raise TextExtractionError(f"PDF OCR failed: {exc}") from exc
 
 
 def _extract_pdf_text(path: Path) -> str:
@@ -55,19 +76,29 @@ def _extract_pdf_text(path: Path) -> str:
         raise TextExtractionError(f"PDF text extraction failed: {exc}") from exc
 
 
-def extract_text(path: Path) -> str:
+def extract_text(path: Path) -> tuple[str, str]:
+    """Extract text from a file.
+
+    Returns (text, method) where method is:
+      "text"        - native text layer (txt / PDF with text)
+      "ocr"         - Tesseract OCR (images, scanned PDFs)
+      "unsupported" - importable file type with no extractor
+    """
     suffix = path.suffix.lower()
 
     if suffix == ".txt":
-        return path.read_text(encoding="utf-8", errors="ignore").strip()
+        return path.read_text(encoding="utf-8", errors="ignore").strip(), "text"
 
     if suffix == ".pdf":
-        return _extract_pdf_text(path)
+        text = _extract_pdf_text(path)
+        if text:
+            return text, "text"
+        return _ocr_pdf(path), "ocr"
 
     if _is_image(path):
-        return _extract_image_text(path)
+        return _extract_image_text(path), "ocr"
 
-    return ""
+    return "", "unsupported"
 
 
 def chunk_text(text: str, chunk_size: int = 1200, overlap: int = 150) -> list[str]:

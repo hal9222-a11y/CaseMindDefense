@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 sqlmodel
 pypdf
+pypdfium2
 pillow
 pytesseract
 httpx
