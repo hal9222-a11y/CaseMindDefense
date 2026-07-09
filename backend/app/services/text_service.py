@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from shutil import which
 import os
@@ -14,6 +15,11 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
 OCR_LANGS = "eng+heb"
 PDF_OCR_RENDER_SCALE = 2.0  # ~144 dpi; raise if OCR quality is poor on small print
+# ponytail: sync OCR in the request path; cap pages until background indexing lands
+PDF_OCR_MAX_PAGES = int(os.getenv("CASEMIND_PDF_OCR_MAX_PAGES", "50"))
+
+
+logger = logging.getLogger(__name__)
 
 
 class TextExtractionError(Exception):
@@ -56,9 +62,15 @@ def _ocr_pdf(path: Path) -> str:
 
         pdf = pdfium.PdfDocument(str(path))
         try:
+            page_count = len(pdf)
+            if page_count > PDF_OCR_MAX_PAGES:
+                logger.warning(
+                    "OCR limited to first %s of %s pages: %s",
+                    PDF_OCR_MAX_PAGES, page_count, path.name,
+                )
             page_texts = []
-            for page in pdf:
-                image = page.render(scale=PDF_OCR_RENDER_SCALE).to_pil()
+            for index in range(min(page_count, PDF_OCR_MAX_PAGES)):
+                image = pdf[index].render(scale=PDF_OCR_RENDER_SCALE).to_pil()
                 page_texts.append(pytesseract.image_to_string(image, lang=OCR_LANGS))
             return "\n".join(page_texts).strip()
         finally:

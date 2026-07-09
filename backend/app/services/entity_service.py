@@ -9,7 +9,9 @@ from app.models.evidence import EvidenceChunk
 
 LATIN_ENTITY_RE = re.compile(r"\b[A-Z][a-zA-Z]{2,}\b")
 HEBREW_TOKEN_RE = re.compile(r"[\u0590-\u05FF]{2,}")
-PHONE_RE = re.compile(r"\b(?:\+972|0)(?:[-\s]?\d){8,10}\b")
+# (?<!\d) instead of \b: there is no word boundary between a space and "+",
+# so \b(?:\+972...) can never match international numbers
+PHONE_RE = re.compile(r"(?<!\d)(?:\+972|0)(?:[-\s]?\d){8,10}\b")
 ISRAELI_ID_RE = re.compile(r"\b\d{9}\b")
 VEHICLE_PLATE_RE = re.compile(r"\b\d{2,3}[-\s]?\d{2,3}[-\s]?\d{2,3}\b")
 
