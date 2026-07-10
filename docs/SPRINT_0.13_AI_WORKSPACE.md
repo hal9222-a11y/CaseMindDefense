@@ -28,9 +28,16 @@ citation-only mode when no LLM is available.
 - Live E2E on a real Hebrew court document: Hebrew question → Hebrew
   answer grounded in the indictment response, citations [1]-[4]
 
+## Delivered (part 2 — bilingual embeddings)
+
+- Default model `intfloat/multilingual-e5-small` with `query:`/`passage:`
+  prefixes; model-name mismatch guard in semantic search (MiniLM and e5
+  are both 384-d — dimension checks cannot catch cross-space mixing)
+- Verified live after full reindex: Hebrew query matched English
+  evidence at 0.86 cosine
+
 ## Remaining in v0.13
 
-- Bilingual embeddings (multilingual-e5) + reindex
 - Hebrew NER (DictaBERT) replacing regex entities
 - Contradiction engine (semantic pairing + NLI/LLM verdict)
 - Entity graph view

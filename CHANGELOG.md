@@ -2,6 +2,12 @@
 
 ## Unreleased (sprint 0.13 — AI Workspace)
 
+- Default embedding model switched to `intfloat/multilingual-e5-small`
+  (Hebrew + English in one vector space; Hebrew queries now match
+  English evidence and vice versa) with e5 `query:`/`passage:` prefixes
+- Semantic search skips chunks embedded with a different model (same
+  dimension ≠ same space) and logs a reindex hint
+
 - `/ai/ask` synthesizes answers with a local LLM via Ollama (default
   `qwen2.5:3b-instruct`), grounded only in stored evidence with `[n]`
   citation markers; response carries `mode` and `model`

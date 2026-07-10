@@ -8,9 +8,10 @@ from typing import Iterable
 
 
 DEFAULT_DIMENSIONS = int(os.getenv("CASEMIND_EMBEDDING_DIMENSIONS", "384"))
+# multilingual-e5: proper Hebrew + English in one space (MiniLM is English-centric)
 SEMANTIC_MODEL_NAME = os.getenv(
     "CASEMIND_EMBEDDING_MODEL",
-    "sentence-transformers/all-MiniLM-L6-v2",
+    "intfloat/multilingual-e5-small",
 )
 
 
@@ -50,7 +51,19 @@ def embedding_dimension(vec: Iterable[float] | None) -> int:
     return len(list(vec))
 
 
-def embed_text(text: str, dimensions: int = DEFAULT_DIMENSIONS) -> list[float]:
+def _prepare_text(text: str, kind: str) -> str:
+    """e5-family models require role prefixes; other models take raw text."""
+    if "e5" in SEMANTIC_MODEL_NAME.lower():
+        prefix = "query: " if kind == "query" else "passage: "
+        return prefix + text
+    return text
+
+
+def embed_text(
+    text: str,
+    dimensions: int = DEFAULT_DIMENSIONS,
+    kind: str = "passage",
+) -> list[float]:
     cleaned = (text or "").strip()
 
     if not cleaned:
@@ -62,7 +75,7 @@ def embed_text(text: str, dimensions: int = DEFAULT_DIMENSIONS) -> list[float]:
         return _fallback_embed_text(cleaned, dimensions=dimensions)
 
     try:
-        vec = model.encode(cleaned, normalize_embeddings=True)
+        vec = model.encode(_prepare_text(cleaned, kind), normalize_embeddings=True)
         return [float(x) for x in vec]
     except Exception:
         return _fallback_embed_text(cleaned, dimensions=dimensions)
