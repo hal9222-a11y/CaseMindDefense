@@ -19,6 +19,31 @@ def test_audit_chain_valid_after_activity(tmp_path):
         assert result["checked"] >= 2  # imported + indexed at minimum
 
 
+def test_concurrent_logging_keeps_chain_intact():
+    """A request handler and a background task can log simultaneously —
+    without the chain lock they fork the chain and verification breaks."""
+    import threading
+
+    from app.services.audit_service import log_event, verify_audit_chain
+
+    with TestClient(app):  # runs lifespan/init_db
+        def writer(n):
+            with Session(get_engine()) as session:
+                for i in range(10):
+                    log_event(session, "concurrency_test", writer=n, seq=i)
+
+        threads = [threading.Thread(target=writer, args=(n,)) for n in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        with Session(get_engine()) as session:
+            result = verify_audit_chain(session)
+        assert result["ok"] is True, result
+        assert result["checked"] >= 50
+
+
 def test_audit_chain_detects_tampering(tmp_path):
     with TestClient(app) as client:
         p = tmp_path / f"tamperlog_{uuid.uuid4().hex}.txt"

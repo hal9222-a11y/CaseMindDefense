@@ -46,12 +46,17 @@ def _evidence_dict(ev: Evidence) -> dict:
 
 
 def _index_in_background(evidence_ids: list[int]) -> None:
+    import logging
+
     # background task: request session is closed by now, open a fresh one
     with Session(get_engine()) as session:
         for evidence_id in evidence_ids:
             try:
                 index_evidence(session, evidence_id)
             except Exception:
+                logging.getLogger(__name__).exception(
+                    "background indexing failed for evidence %s", evidence_id
+                )
                 ev = session.get(Evidence, evidence_id)
                 if ev is not None:
                     ev.status = "text_extraction_failed"
