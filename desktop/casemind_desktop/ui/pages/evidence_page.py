@@ -5,12 +5,15 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
+    QInputDialog,
     QLabel,
     QMessageBox,
     QSplitter,
     QVBoxLayout,
     QWidget,
 )
+
+from workers.api_worker import run_async
 
 from api.client import ApiClient
 from controllers.evidence_controller import EvidenceController
@@ -42,6 +45,8 @@ class EvidencePage(QWidget):
 
         self.toolbar.refresh_clicked.connect(self._refresh)
         self.toolbar.import_clicked.connect(self._pick_and_import)
+        self.toolbar.new_case_clicked.connect(self._create_case)
+        self.toolbar.case_changed.connect(lambda _case_id: self._refresh())
 
         self._pending_highlight: str | None = None
         self._pending_focus_id: int | None = None
@@ -70,11 +75,26 @@ class EvidencePage(QWidget):
         layout.addWidget(splitter)
         self.setLayout(layout)
 
+        self._load_cases()
         self._refresh()
+
+    def _load_cases(self) -> None:
+        run_async(self.api.list_cases, on_done=self.toolbar.set_cases)
+
+    def _create_case(self) -> None:
+        name, ok = QInputDialog.getText(self, "New Case", "Case name:")
+        if not ok or not name.strip():
+            return
+        run_async(
+            self.api.create_case,
+            name.strip(),
+            on_done=lambda _case: self._load_cases(),
+            on_error=lambda err: QMessageBox.critical(self, "Create Case Failed", err),
+        )
 
     def _refresh(self) -> None:
         self.toolbar.set_busy(True)
-        self.controller.load_evidence()
+        self.controller.load_evidence(self.toolbar.current_case_id())
 
     def _pick_and_import(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
@@ -83,7 +103,7 @@ class EvidencePage(QWidget):
         if not file_path:
             return
         self.toolbar.set_busy(True)
-        self.controller.import_file(file_path)
+        self.controller.import_file(file_path, self.toolbar.current_case_id())
 
     def _on_evidence_selected(self, item: dict[str, Any]) -> None:
         self.preview.show_evidence(item, highlight=self._pending_highlight)

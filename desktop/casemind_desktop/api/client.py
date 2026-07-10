@@ -23,15 +23,44 @@ class ApiClient:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    def list_evidence(self) -> list[dict[str, Any]]:
-        response = requests.get(self._url(endpoints.EVIDENCE), timeout=REQUEST_TIMEOUT)
+    def list_evidence(self, case_id: int | None = None) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {}
+        if case_id is not None:
+            params["case_id"] = case_id
+        response = requests.get(
+            self._url(endpoints.EVIDENCE), params=params, timeout=REQUEST_TIMEOUT
+        )
         response.raise_for_status()
         return response.json()
 
-    def import_evidence_file(self, file_path: str) -> dict[str, Any]:
+    def import_evidence_file(self, file_path: str, case_id: int | None = None) -> dict[str, Any]:
+        body: dict[str, Any] = {"path": file_path}
+        if case_id is not None:
+            body["case_id"] = case_id
         response = requests.post(
             self._url(endpoints.EVIDENCE_IMPORT_FILE),
-            json={"path": file_path},
+            json=body,
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def list_cases(self) -> list[dict[str, Any]]:
+        response = requests.get(self._url(endpoints.CASES), timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        return response.json()
+
+    def create_case(self, name: str) -> dict[str, Any]:
+        response = requests.post(
+            self._url(endpoints.CASES), json={"name": name}, timeout=REQUEST_TIMEOUT
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def entity_graph(self, max_nodes: int = 30) -> dict[str, Any]:
+        response = requests.get(
+            self._url(endpoints.ENTITY_GRAPH),
+            params={"max_nodes": max_nodes},
             timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()

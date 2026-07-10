@@ -47,6 +47,23 @@ def test_regex_fallback_when_model_missing(tmp_path, monkeypatch):
         assert "hebrew_term" in types
 
 
+def test_entity_graph_connects_cooccurring_entities(tmp_path, monkeypatch):
+    monkeypatch.setattr(ner_service, "_load_ner", lambda: FakeNer())
+    with TestClient(app) as client:
+        marker = uuid.uuid4().hex
+        p = tmp_path / f"graph_{marker}.txt"
+        # both entities in one evidence -> expect an edge between them
+        p.write_text(f"העד דוד לוי נראה בתל אביב. {marker}", encoding="utf-8")
+        assert client.post("/evidence/import-file", json={"path": str(p)}).status_code == 200
+
+        graph = client.get("/entities/graph", params={"max_nodes": 50}).json()
+        names = {n["entity"] for n in graph["nodes"]}
+        assert {"דוד לוי", "תל אביב"} <= names
+        assert any(
+            {e["a"], e["b"]} == {"דוד לוי", "תל אביב"} for e in graph["edges"]
+        )
+
+
 def test_reindex_replaces_entities(tmp_path, monkeypatch):
     monkeypatch.setattr(ner_service, "_load_ner", lambda: FakeNer())
     with TestClient(app) as client:

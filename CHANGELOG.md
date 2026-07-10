@@ -2,6 +2,11 @@
 
 ## Unreleased (sprint 0.13 — AI Workspace)
 
+- Entity co-occurrence graph (`/entities/graph` + desktop page: circle
+  layout, node size by mentions, color by type, double-click searches)
+- Case picker in the Evidence toolbar (filter, import into case, create)
+- AI page shows the answer mode and model
+
 - Real contradiction engine: semantically similar chunk pairs across
   different evidence are judged by the local LLM; consistent pairs are
   dropped, contradictions come with an explanation; without an LLM the

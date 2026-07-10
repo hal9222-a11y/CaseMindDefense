@@ -54,6 +54,42 @@ def list_entities(session: Session) -> list[dict]:
     return _legacy_regex_scan(session)
 
 
+def entity_graph(session: Session, max_nodes: int = 30, max_edges: int = 200) -> dict:
+    """Co-occurrence graph: nodes are the top entities, an edge connects two
+    entities that appear in the same evidence (weight = shared evidence count)."""
+    from collections import Counter, defaultdict
+    from itertools import combinations
+
+    from app.models.evidence import ExtractedEntity
+
+    rows = session.exec(
+        select(ExtractedEntity.text, ExtractedEntity.label, ExtractedEntity.evidence_id)
+    ).all()
+
+    counts: Counter = Counter((text, label) for text, label, _ in rows)
+    top = {key for key, _ in counts.most_common(max_nodes)}
+
+    entities_by_evidence: dict[int, set] = defaultdict(set)
+    for text, label, evidence_id in rows:
+        if (text, label) in top:
+            entities_by_evidence[evidence_id].add((text, label))
+
+    edge_weights: Counter = Counter()
+    for entities in entities_by_evidence.values():
+        for a, b in combinations(sorted(entities), 2):
+            edge_weights[(a, b)] += 1
+
+    nodes = [
+        {"entity": text, "type": label, "count": counts[(text, label)]}
+        for text, label in sorted(top, key=lambda key: -counts[key])
+    ]
+    edges = [
+        {"a": a[0], "b": b[0], "weight": weight}
+        for (a, b), weight in edge_weights.most_common(max_edges)
+    ]
+    return {"nodes": nodes, "edges": edges}
+
+
 def _legacy_regex_scan(session: Session) -> list[dict]:
     counts: dict[tuple[str, str], int] = {}
 

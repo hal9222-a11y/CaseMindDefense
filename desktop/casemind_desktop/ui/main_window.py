@@ -12,6 +12,7 @@ from ui.pages.ai_page import AIPage
 from ui.pages.dashboard_page import DashboardPage
 from ui.pages.data_page import DataPage
 from ui.pages.evidence_page import EvidencePage
+from ui.pages.graph_page import GraphPage
 from ui.pages.placeholder_page import PlaceholderPage
 from ui.pages.search_page import SearchPage
 from ui.widgets.status_bar_widget import StatusBarWidget
@@ -37,6 +38,7 @@ class MainWindow(QMainWindow):
                 "Timeline",
                 "Entities",
                 "Contradictions",
+                "Entity Graph",
                 "Settings",
             ]
         )
@@ -78,11 +80,16 @@ class MainWindow(QMainWindow):
             note="LLM-judged similar pairs — double-click opens evidence A",
         )
 
+        self.graph_page = GraphPage(self.api)
+
         self.search_page.results.result_selected.connect(self._open_citation)
         self.ai_page.citations.result_selected.connect(self._open_citation)
         self.timeline_page.table.row_activated.connect(self._open_citation)
         self.contradictions_page.table.row_activated.connect(self._open_citation)
         self.entities_page.table.row_activated.connect(self._search_entity)
+        self.graph_page.entity_activated.connect(
+            lambda entity: self._search_entity({"entity": entity})
+        )
 
         self.pages = QStackedWidget()
         self.pages.addWidget(DashboardPage(self.status.check_backend))
@@ -92,6 +99,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.timeline_page)
         self.pages.addWidget(self.entities_page)
         self.pages.addWidget(self.contradictions_page)
+        self.pages.addWidget(self.graph_page)
         self.pages.addWidget(PlaceholderPage("Settings", "Backend URL, theme, logs and preferences."))
 
         self.sidebar.currentRowChanged.connect(self.pages.setCurrentIndex)

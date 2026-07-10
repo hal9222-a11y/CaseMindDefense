@@ -10,6 +10,8 @@ AI_ASK = "/ai/ask"
 
 TIMELINE = "/timeline"
 ENTITIES = "/entities"
+ENTITY_GRAPH = "/entities/graph"
+CASES = "/cases"
 CONTRADICTIONS = "/contradictions"
 AUDIT = "/audit"
 

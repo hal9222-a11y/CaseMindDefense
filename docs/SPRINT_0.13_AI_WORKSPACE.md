@@ -61,6 +61,15 @@ citation-only mode when no LLM is available.
   differences; explanations kept in English (Hebrew pinning produced
   mixed-script output) — larger CASEMIND_LLM_MODEL improves both
 
-## Remaining in v0.13
-- Entity graph view
-- Desktop: show answer mode/model in the AI page
+## Delivered (part 5 — graph, case picker, AI mode)
+
+- `/entities/graph`: co-occurrence graph (top-N entities, edge weight =
+  shared evidence count); desktop Entity Graph page renders it in a
+  QGraphicsScene circle layout (size = mentions, color = type,
+  double-click = search occurrences)
+- Case picker in the Evidence toolbar: filter by case, import into the
+  selected case, create cases inline
+- AI page shows the answer mode (LLM model name / citations-only)
+
+**v0.13 scope complete.** Next: run the MVP acceptance test — a real
+case folder end to end — then v0.14 (reporting).
