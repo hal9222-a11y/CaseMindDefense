@@ -36,8 +36,12 @@ class AIPage(QWidget):
 
         self.citations = ResultsTableWidget()
 
+        self.mode_label = QLabel("")
+        self.mode_label.setStyleSheet("color: #9CA3AF;")
+
         top_bar = QHBoxLayout()
         top_bar.addWidget(self.ask_button)
+        top_bar.addWidget(self.mode_label)
         top_bar.addStretch()
 
         answer_panel = QWidget()
@@ -83,6 +87,14 @@ class AIPage(QWidget):
         self.ask_button.setEnabled(True)
         self.answer_output.setPlainText(result.get("answer", ""))
         self.citations.set_results(result.get("citations", []))
+        mode = result.get("mode", "")
+        model = result.get("model", "")
+        if mode == "llm":
+            self.mode_label.setText(f"🤖 answered by {model}")
+        elif mode == "citations_only":
+            self.mode_label.setText("📄 citations only (no local LLM available)")
+        else:
+            self.mode_label.setText("")
 
     def _on_failed(self, error: str) -> None:
         self.ask_button.setEnabled(True)

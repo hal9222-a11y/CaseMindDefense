@@ -19,7 +19,8 @@ def test_semantic_search_returns_results_after_import(tmp_path):
     )
 
     assert import_response.status_code == 200
-    assert import_response.json()["status"] == "indexed"
+    final = client.get(f"/evidence/{import_response.json()['id']}").json()
+    assert final["status"] == "indexed"
 
     search_response = client.get(
         "/search/semantic",

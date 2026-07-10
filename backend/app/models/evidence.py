@@ -8,8 +8,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class Case(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class Evidence(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    case_id: Optional[int] = Field(default=None, foreign_key="case.id", index=True)
     original_path: str
     stored_path: str
     filename: str
@@ -30,6 +37,14 @@ class EvidenceChunk(SQLModel, table=True):
     embedding_model: str = ""
     embedding_dimension: int = 0
     embedding_version: str = "1"
+
+
+class ExtractedEntity(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    evidence_id: int = Field(foreign_key="evidence.id", index=True)
+    chunk_index: int = 0
+    text: str = Field(index=True)
+    label: str = Field(index=True)
 
 
 class AuditEvent(SQLModel, table=True):

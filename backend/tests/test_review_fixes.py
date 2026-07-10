@@ -7,6 +7,17 @@ from app.services.entity_service import PHONE_RE
 from app.services.timeline_service import SNIPPET_RADIUS, _snippet
 
 
+def test_e5_prefixes_applied_by_kind(monkeypatch):
+    from app.services import embedding_service
+
+    monkeypatch.setattr(embedding_service, "SEMANTIC_MODEL_NAME", "intfloat/multilingual-e5-small")
+    assert embedding_service._prepare_text("abc", "query") == "query: abc"
+    assert embedding_service._prepare_text("abc", "passage") == "passage: abc"
+
+    monkeypatch.setattr(embedding_service, "SEMANTIC_MODEL_NAME", "sentence-transformers/all-MiniLM-L6-v2")
+    assert embedding_service._prepare_text("abc", "query") == "abc"
+
+
 def test_phone_regex_matches_international_and_local():
     text = "call +972-52-123-4567 or 052-1234567"
     matches = PHONE_RE.findall(text)

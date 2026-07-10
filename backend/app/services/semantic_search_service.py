@@ -5,7 +5,12 @@ import logging
 from sqlmodel import Session, select
 
 from app.models.evidence import Evidence, EvidenceChunk
-from app.services.embedding_service import cosine_similarity, deserialize_embedding, embed_text
+from app.services.embedding_service import (
+    cosine_similarity,
+    deserialize_embedding,
+    embed_text,
+    embedding_model_name,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -17,16 +22,27 @@ def semantic_search(session: Session, query: str, limit: int = 10) -> list[dict]
     if not query:
         return []
 
-    query_embedding = embed_text(query)
+    query_embedding = embed_text(query, kind="query")
 
     if not query_embedding:
         return []
 
+    current_model = embedding_model_name()
     chunks = session.exec(select(EvidenceChunk)).all()
     evidence_cache: dict[int, Evidence | None] = {}
     results: list[dict] = []
 
     for chunk in chunks:
+        # same dimension does not mean same vector space (MiniLM and e5 are
+        # both 384-d) - compare by recorded model and require a reindex
+        if chunk.embedding_model and chunk.embedding_model != current_model:
+            logger.warning(
+                "Skipping chunk embedded with a different model "
+                "(chunk_id=%s model=%s current=%s) - reindex the evidence",
+                chunk.id, chunk.embedding_model, current_model,
+            )
+            continue
+
         chunk_embedding = deserialize_embedding(chunk.embedding or "")
 
         if len(chunk_embedding) != len(query_embedding):

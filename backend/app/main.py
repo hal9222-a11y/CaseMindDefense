@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.db import init_db
-from app.api import health, evidence, search, audit, entities, timeline, contradictions, ai
+from app.api import health, evidence, search, audit, entities, timeline, contradictions, ai, cases
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -18,3 +18,4 @@ app.include_router(entities.router)
 app.include_router(timeline.router)
 app.include_router(contradictions.router)
 app.include_router(ai.router)
+app.include_router(cases.router)

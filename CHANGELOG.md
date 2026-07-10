@@ -1,5 +1,53 @@
 # Changelog
 
+## Unreleased (sprint 0.13 — AI Workspace)
+
+- Entity co-occurrence graph (`/entities/graph` + desktop page: circle
+  layout, node size by mentions, color by type, double-click searches)
+- Case picker in the Evidence toolbar (filter, import into case, create)
+- AI page shows the answer mode and model
+
+- Real contradiction engine: semantically similar chunk pairs across
+  different evidence are judged by the local LLM; consistent pairs are
+  dropped, contradictions come with an explanation; without an LLM the
+  top pairs are returned as `unverified`. Desktop page shows verdict /
+  files / similarity / explanation and double-click opens evidence A
+
+- Hebrew NER via DictaBERT: entities extracted at index time into an
+  `extractedentity` table (person / organization / location / time +
+  deterministic phone / ID / plate patterns), aggregated by `/entities`;
+  regex fallback when the model is unavailable; reindex replaces entities
+
+- Default embedding model switched to `intfloat/multilingual-e5-small`
+  (Hebrew + English in one vector space; Hebrew queries now match
+  English evidence and vice versa) with e5 `query:`/`passage:` prefixes
+- Semantic search skips chunks embedded with a different model (same
+  dimension ≠ same space) and logs a reindex hint
+
+- `/ai/ask` synthesizes answers with a local LLM via Ollama (default
+  `qwen2.5:3b-instruct`), grounded only in stored evidence with `[n]`
+  citation markers; response carries `mode` and `model`
+- Graceful degradation: no Ollama / model failure → citation-only mode
+  (previous behavior), never an error
+- Small-model artifact cleanup and question-language pinning (Hebrew
+  answers stay Hebrew)
+
+## Unreleased (sprint 0.12.5 — Scale Foundation)
+
+- Case entity: create/list cases, import into a case, filter evidence by case
+- Imports return immediately (`processing`) and index in the background;
+  `GET /evidence/{id}` polls status; `POST /evidence/{id}/reindex` rebuilds chunks
+- Keyword search served by SQLite FTS5 (trigger-synced, LIKE fallback)
+
+## Unreleased (sprint 0.12.4 — Investigation Views)
+
+- Timeline, Entities, and Contradictions pages show live data (no
+  placeholders left except Settings); pages lazy-load on first open
+- Entities carry a type (name / hebrew_term / phone / israeli_id /
+  vehicle_plate); double-clicking an entity searches its occurrences
+- Timeline double-click opens the evidence with the snippet highlighted
+- Contradictions page marked experimental until the v0.13 engine
+
 ## Unreleased (sprint 0.12.2 — Search Workspace)
 
 - Search mode toggle: Semantic / Keyword in one search page

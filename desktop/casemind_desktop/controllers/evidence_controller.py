@@ -18,17 +18,19 @@ class EvidenceController(QObject):
         super().__init__()
         self.api = api or ApiClient()
 
-    def load_evidence(self) -> None:
+    def load_evidence(self, case_id: int | None = None) -> None:
         run_async(
             self.api.list_evidence,
+            case_id,
             on_done=self.evidence_loaded.emit,
             on_error=self.load_failed.emit,
         )
 
-    def import_file(self, file_path: str) -> None:
+    def import_file(self, file_path: str, case_id: int | None = None) -> None:
         run_async(
             self.api.import_evidence_file,
             file_path,
+            case_id,
             on_done=self.import_done.emit,
             on_error=self.import_failed.emit,
         )
