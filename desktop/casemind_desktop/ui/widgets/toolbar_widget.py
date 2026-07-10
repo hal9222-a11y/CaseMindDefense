@@ -3,7 +3,14 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import (
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QWidget,
+)
 
 
 class ToolbarWidget(QWidget):
@@ -14,6 +21,8 @@ class ToolbarWidget(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
+
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         self.refresh_button = QPushButton("Refresh")
         self.import_button = QPushButton("Import Evidence")

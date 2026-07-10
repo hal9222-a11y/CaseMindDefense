@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
+from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
 
 class EvidenceTableWidget(QTableWidget):
@@ -21,6 +21,10 @@ class EvidenceTableWidget(QTableWidget):
         self.setSelectionBehavior(QTableWidget.SelectRows)
         self.setEditTriggers(QTableWidget.NoEditTriggers)
         self.itemSelectionChanged.connect(self._on_selection_changed)
+
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)  # Filename fills the width
 
     def set_items(self, items: list[dict[str, Any]]) -> None:
         self._items = items
@@ -40,8 +44,6 @@ class EvidenceTableWidget(QTableWidget):
                 cell = QTableWidgetItem(value)
                 cell.setToolTip(value)
                 self.setItem(row, col, cell)
-
-        self.resizeColumnsToContents()
 
     def _on_selection_changed(self) -> None:
         row = self.currentRow()

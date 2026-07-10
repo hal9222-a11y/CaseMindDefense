@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
+from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
 
 class DataTableWidget(QTableWidget):
@@ -24,6 +24,10 @@ class DataTableWidget(QTableWidget):
         self.setEditTriggers(QTableWidget.NoEditTriggers)
         self.cellDoubleClicked.connect(self._on_double_clicked)
 
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(len(columns) - 1, QHeaderView.Stretch)
+
     def set_rows(self, rows: list[dict[str, Any]]) -> None:
         self._rows = rows
         self.setRowCount(len(rows))
@@ -34,8 +38,6 @@ class DataTableWidget(QTableWidget):
                 cell = QTableWidgetItem("" if value is None else str(value))
                 cell.setToolTip(cell.text())
                 self.setItem(row_index, col_index, cell)
-
-        self.resizeColumnsToContents()
 
     def _on_double_clicked(self, row: int, _col: int) -> None:
         if 0 <= row < len(self._rows):

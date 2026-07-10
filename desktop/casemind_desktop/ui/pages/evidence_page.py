@@ -71,8 +71,11 @@ class EvidencePage(QWidget):
         splitter.setSizes([650, 500, 350])
 
         layout = QVBoxLayout()
-        layout.addWidget(self.toolbar)
-        layout.addWidget(splitter)
+        # stretch factors: toolbar stays one row tall, the splitter takes
+        # all remaining height (otherwise Qt centers the toolbar in half
+        # the page)
+        layout.addWidget(self.toolbar, 0)
+        layout.addWidget(splitter, 1)
         self.setLayout(layout)
 
         self._load_cases()
