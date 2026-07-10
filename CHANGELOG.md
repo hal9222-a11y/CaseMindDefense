@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased (sprint 0.13 — AI Workspace)
+
+- `/ai/ask` synthesizes answers with a local LLM via Ollama (default
+  `qwen2.5:3b-instruct`), grounded only in stored evidence with `[n]`
+  citation markers; response carries `mode` and `model`
+- Graceful degradation: no Ollama / model failure → citation-only mode
+  (previous behavior), never an error
+- Small-model artifact cleanup and question-language pinning (Hebrew
+  answers stay Hebrew)
+
 ## Unreleased (sprint 0.12.5 — Scale Foundation)
 
 - Case entity: create/list cases, import into a case, filter evidence by case
