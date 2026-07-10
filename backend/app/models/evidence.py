@@ -53,3 +53,7 @@ class AuditEvent(SQLModel, table=True):
     evidence_id: Optional[int] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utcnow)
     details_json: str = "{}"
+    # tamper-evident hash chain: event_hash covers this event + prev_hash,
+    # so modifying or removing any past event breaks every hash after it
+    prev_hash: str = ""
+    event_hash: str = ""

@@ -13,6 +13,8 @@ ENTITIES = "/entities"
 ENTITY_GRAPH = "/entities/graph"
 CASES = "/cases"
 REPORTS = "/reports"
+ADMIN_VERIFY = "/admin/verify-evidence"
+ADMIN_BACKUP = "/admin/backup"
 CONTRADICTIONS = "/contradictions"
 AUDIT = "/audit"
 

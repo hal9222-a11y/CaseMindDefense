@@ -13,8 +13,8 @@ from ui.pages.dashboard_page import DashboardPage
 from ui.pages.data_page import DataPage
 from ui.pages.evidence_page import EvidencePage
 from ui.pages.graph_page import GraphPage
-from ui.pages.placeholder_page import PlaceholderPage
 from ui.pages.search_page import SearchPage
+from ui.pages.settings_page import SettingsPage
 from ui.widgets.status_bar_widget import StatusBarWidget
 
 
@@ -100,7 +100,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.entities_page)
         self.pages.addWidget(self.contradictions_page)
         self.pages.addWidget(self.graph_page)
-        self.pages.addWidget(PlaceholderPage("Settings", "Backend URL, theme, logs and preferences."))
+        self.pages.addWidget(SettingsPage(self.api))
 
         self.sidebar.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.sidebar.setCurrentRow(0)
