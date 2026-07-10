@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased (sprint 0.12.2 — Search Workspace)
+
+- Search mode toggle: Semantic / Keyword in one search page
+- Citation navigation: double-clicking a search result or AI citation
+  opens the Evidence page with the row selected and the cited chunk
+  highlighted in the text preview; PDF citations show the cited excerpt
+  until real PDF rendering lands
+
 ## Unreleased (sprint 0.12.1 — Desktop Workspace)
 
 - Search and AI pages rebuilt on the widget pattern with a shared results

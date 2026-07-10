@@ -42,11 +42,18 @@ class MainWindow(QMainWindow):
 
         self.status = StatusBarWidget(self.api)
 
+        self.evidence_page = EvidencePage(self.api)
+        self.search_page = SearchPage(self.api)
+        self.ai_page = AIPage(self.api)
+
+        self.search_page.results.result_selected.connect(self._open_citation)
+        self.ai_page.citations.result_selected.connect(self._open_citation)
+
         self.pages = QStackedWidget()
         self.pages.addWidget(DashboardPage(self.status.check_backend))
-        self.pages.addWidget(EvidencePage(self.api))
-        self.pages.addWidget(SearchPage(self.api))
-        self.pages.addWidget(AIPage(self.api))
+        self.pages.addWidget(self.evidence_page)
+        self.pages.addWidget(self.search_page)
+        self.pages.addWidget(self.ai_page)
         self.pages.addWidget(PlaceholderPage("Timeline", "Investigation timeline will live here."))
         self.pages.addWidget(PlaceholderPage("Entities", "Extracted entities will live here."))
         self.pages.addWidget(PlaceholderPage("Contradictions", "Potential evidence conflicts will live here."))
@@ -68,6 +75,13 @@ class MainWindow(QMainWindow):
 
         self.apply_dark_theme()
         self.status.check_backend()
+
+    def _open_citation(self, result: dict) -> None:
+        evidence_id = result.get("evidence_id")
+        if evidence_id is None:
+            return
+        self.sidebar.setCurrentRow(1)  # Evidence page
+        self.evidence_page.focus_evidence(evidence_id, result.get("text"))
 
     def apply_dark_theme(self) -> None:
         self.setStyleSheet(

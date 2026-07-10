@@ -7,8 +7,8 @@ from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
 
 
 class ResultsTableWidget(QTableWidget):
-    """Search results / AI citations table. Emits result_selected for
-    citation navigation (wired up in sprint 0.12.2)."""
+    """Search results / AI citations table. Double-clicking a row emits
+    result_selected for citation navigation."""
 
     result_selected = Signal(dict)
 
@@ -23,7 +23,7 @@ class ResultsTableWidget(QTableWidget):
         self.setHorizontalHeaderLabels(self.HEADERS)
         self.setSelectionBehavior(QTableWidget.SelectRows)
         self.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.itemSelectionChanged.connect(self._on_selection_changed)
+        self.cellDoubleClicked.connect(self._on_double_clicked)
 
     def set_results(self, results: list[dict[str, Any]]) -> None:
         self._results = results
@@ -45,7 +45,6 @@ class ResultsTableWidget(QTableWidget):
 
         self.resizeColumnsToContents()
 
-    def _on_selection_changed(self) -> None:
-        row = self.currentRow()
+    def _on_double_clicked(self, row: int, _col: int) -> None:
         if 0 <= row < len(self._results):
             self.result_selected.emit(self._results[row])

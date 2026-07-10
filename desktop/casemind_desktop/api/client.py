@@ -54,6 +54,15 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def keyword_search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+        response = requests.get(
+            self._url(endpoints.SEARCH),
+            params={"q": query, "limit": limit},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def ask_ai(self, question: str, limit: int = 5) -> dict[str, Any]:
         response = requests.post(
             self._url(endpoints.AI_ASK),
