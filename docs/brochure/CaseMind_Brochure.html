@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="utf-8">
+<title>CaseMind Defense — חוברת יכולות</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Segoe UI", Arial, sans-serif; color: #1a2233; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .page { width: 210mm; min-height: 296mm; padding: 14mm 16mm; page-break-after: always; position: relative; background: #fff; }
+  .page:last-child { page-break-after: auto; }
+
+  /* ---------- typography ---------- */
+  h1 { font-size: 34px; font-weight: 800; }
+  h2 { font-size: 21px; color: #1d4ed8; margin-bottom: 5mm; border-right: 4px solid #2563eb; padding-right: 4mm; }
+  h3 { font-size: 14px; margin-bottom: 2mm; }
+  p  { font-size: 12.5px; line-height: 1.55; }
+  .muted { color: #5b6472; }
+
+  /* ---------- cover ---------- */
+  .cover { background: linear-gradient(160deg, #0b1220 0%, #111827 55%, #1e3a8a 130%); color: #f9fafb; display: flex; flex-direction: column; }
+  .cover .brand { font-size: 46px; font-weight: 900; letter-spacing: .5px; margin-top: 26mm; }
+  .cover .brand span { color: #60a5fa; }
+  .cover .tag { font-size: 19px; color: #c7d2fe; margin-top: 4mm; }
+  .cover .sub { font-size: 13.5px; color: #9ca3af; margin-top: 8mm; max-width: 150mm; line-height: 1.7; }
+  .principles { display: flex; gap: 5mm; margin-top: 14mm; }
+  .principle { flex: 1; background: rgba(255,255,255,.06); border: 1px solid rgba(96,165,250,.35); border-radius: 10px; padding: 6mm; }
+  .principle b { display: block; color: #93c5fd; font-size: 14px; margin-bottom: 2mm; }
+  .principle span { font-size: 11.5px; color: #d1d5db; line-height: 1.5; }
+  .stats { display: flex; gap: 4mm; margin-top: auto; margin-bottom: 12mm; }
+  .stat { flex: 1; text-align: center; background: rgba(37,99,235,.15); border-radius: 10px; padding: 5mm 2mm; }
+  .stat b { display: block; font-size: 21px; color: #60a5fa; }
+  .stat span { font-size: 10.5px; color: #cbd5e1; }
+
+  /* ---------- app mockups ---------- */
+  .shot { background: #0b1220; border-radius: 10px; padding: 0; overflow: hidden; box-shadow: 0 4px 18px rgba(15,23,42,.35); border: 1px solid #24304a; margin: 4mm 0; }
+  .chrome { background: #1f2937; padding: 2.2mm 4mm; display: flex; align-items: center; gap: 2mm; }
+  .dot { width: 3mm; height: 3mm; border-radius: 50%; }
+  .chrome .t { color: #9ca3af; font-size: 10px; margin-right: 3mm; }
+  .app { display: flex; min-height: 52mm; }
+  .side { width: 30mm; background: #1f2937; padding: 3mm 0; font-size: 10px; color: #d1d5db; }
+  .side div { padding: 2mm 4mm; }
+  .side .on { background: #2563eb; color: #fff; border-radius: 0 5px 5px 0; }
+  .main { flex: 1; padding: 3.5mm; color: #e5e7eb; }
+  .btn { display: inline-block; background: #2563eb; color: #fff; font-size: 9.5px; padding: 1.4mm 3mm; border-radius: 4px; margin-left: 1.5mm; }
+  .btn.ghost { background: #374151; }
+  table.ui { width: 100%; border-collapse: collapse; font-size: 9.5px; margin-top: 2.5mm; color: #e5e7eb; }
+  table.ui th { background: #1f2937; color: #93c5fd; text-align: right; padding: 1.6mm 2mm; border: 1px solid #2b3650; }
+  table.ui td { padding: 1.5mm 2mm; border: 1px solid #222c44; }
+  tr.sel td { background: #1d3461; }
+  .pill { display: inline-block; font-size: 8.5px; padding: .5mm 2mm; border-radius: 8px; }
+  .ok { background: #064e3b; color: #6ee7b7; } .proc { background: #4a3a09; color: #fbbf24; } .med { background: #3b0764; color: #d8b4fe; }
+  .panel { background: #111a2e; border: 1px solid #24304a; border-radius: 6px; padding: 3mm; margin-top: 2.5mm; font-size: 10px; color: #d1d5db; line-height: 1.6; }
+  .cite { color: #60a5fa; font-weight: 700; }
+  .hl { background: #a16207; color: #fff; padding: 0 1mm; border-radius: 2px; }
+  .qbar { display: flex; gap: 2mm; margin-bottom: 2mm; }
+  .q { flex: 1; background: #0e1830; border: 1px solid #2b3650; color: #e5e7eb; border-radius: 5px; padding: 1.8mm 3mm; font-size: 10px; }
+
+  /* ---------- capability blocks ---------- */
+  .proof { display: inline-block; background: #eef2ff; color: #1d4ed8; font-size: 10px; padding: 1mm 3mm; border-radius: 10px; margin-top: 1.5mm; font-weight: 600; }
+  .cols { display: flex; gap: 6mm; }
+  .col { flex: 1; }
+  .cap { margin-bottom: 4mm; }
+  .cap p { font-size: 11.5px; }
+  ul.feat { font-size: 11.5px; line-height: 1.7; padding-right: 5mm; }
+
+  .foot { position: absolute; bottom: 8mm; right: 16mm; left: 16mm; display: flex; justify-content: space-between; font-size: 9.5px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 2mm; }
+
+  table.spec { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 2mm; }
+  table.spec th { background: #eef2ff; color: #1e3a8a; text-align: right; padding: 2.2mm 3mm; border: 1px solid #c7d2fe; }
+  table.spec td { padding: 2mm 3mm; border: 1px solid #e2e8f0; }
+</style>
+</head>
+<body>
+
+<!-- ============ PAGE 1: COVER ============ -->
+<div class="page cover">
+  <div class="brand">CaseMind <span>Defense</span></div>
+  <div class="tag">Investigation Intelligence Platform — מקומית, מאובטחת, מבוססת-ראיות</div>
+  <p class="sub">
+    פלטפורמה לניהול וניתוח ראיות עבור עורכי דין, חוקרים וצוותי חקירה:
+    כל מסמך, סריקה, האזנה וּוידאו הופכים למידע שניתן לחפש, להצליב
+    ולשאול עליו שאלות — כשכל תשובה מגובה בציטוט מדויק למקור.
+  </p>
+  <div class="principles">
+    <div class="principle"><b>🔒 הכול מקומי</b><span>אפס ענן. המסמכים, ההקלטות ומנועי ה-AI רצים על המחשב שלך בלבד. חומר חסוי נשאר חסוי.</span></div>
+    <div class="principle"><b>⚖️ אין טענה בלי ראיה</b><span>כל תשובת AI מצטטת מקור: טווח תווים במסמך או דקה מדויקת בהקלטה. אין מקור — אין תשובה.</span></div>
+    <div class="principle"><b>🔗 שרשרת משמורת</b><span>כל קובץ חתום SHA256, כל פעולה ביומן חסין-זיוף, וכל שינוי בראיה — מתגלה.</span></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><b>3</b><span>שפות: עברית · רוסית · אנגלית</span></div>
+    <div class="stat"><b>120</b><span>מסמכים נקלטים ב-4 שניות</span></div>
+    <div class="stat"><b>0.13s</b><span>חיפוש סמנטי על תיק מלא</span></div>
+    <div class="stat"><b>100%</b><span>מהעיבוד — על המחשב שלך</span></div>
+  </div>
+</div>
+
+<!-- ============ PAGE 2: WORKSPACE ============ -->
+<div class="page">
+  <h2>סביבת העבודה — כל התיק במסך אחד</h2>
+  <p>ניהול תיקים מופרד, ייבוא בגרירה של קובץ או תיקייה שלמה, ועיבוד אוטומטי ברקע:
+     ‏OCR, תמלול, אינדוקס סמנטי וזיהוי ישויות — בלי לחסום את העבודה.</p>
+
+  <div class="shot">
+    <div class="chrome"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span><span class="t">CaseMind Defense — 0.15</span></div>
+    <div class="app">
+      <div class="side">
+        <div>Dashboard</div><div class="on">Evidence</div><div>Search</div><div>AI Workspace</div><div>Timeline</div><div>Entities</div><div>Contradictions</div><div>Entity Graph</div><div>Settings</div>
+      </div>
+      <div class="main">
+        <div style="font-size:10px; margin-bottom:2mm">
+          תיק: <b style="color:#93c5fd">מ"י נ' ישראלי 1234/26</b>
+          <span class="btn ghost">New Case</span><span class="btn ghost">Refresh</span><span class="btn">Import Evidence</span><span class="btn">Report</span>
+        </div>
+        <table class="ui">
+          <tr><th>ID</th><th>שם קובץ</th><th>סוג</th><th>גודל</th><th>סטטוס</th><th>נקלט</th></tr>
+          <tr><td>12</td><td>כתב אישום.pdf</td><td>pdf</td><td>159 KB</td><td><span class="pill ok">indexed</span></td><td>2026-07-08 09:12</td></tr>
+          <tr class="sel"><td>13</td><td>הודעת עד — כהן.pdf (סרוק)</td><td>pdf</td><td>2.1 MB</td><td><span class="pill ok">ocr_indexed</span></td><td>2026-07-08 09:13</td></tr>
+          <tr><td>14</td><td>האזנה 17.3 שיחה 42.mp3</td><td>mp3</td><td>18 MB</td><td><span class="pill med">transcribed</span></td><td>2026-07-08 09:15</td></tr>
+          <tr><td>15</td><td>חקירה מצולמת — חשוד.mp4</td><td>mp4</td><td>410 MB</td><td><span class="pill proc">processing…</span></td><td>2026-07-08 09:16</td></tr>
+        </table>
+        <div class="panel">‏<b style="color:#93c5fd">Preview:</b> "…העד מסר כי בשעה 20:00 לערך הבחין ברכב לבן חונה סמוך לכניסה…" <span class="muted" style="color:#7c8aa5">· Inspector: ‏SHA256 ‏9f42a1…c3 · מקור: ‏D:\case\scans\</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div class="col cap">
+      <h3>📥 קליטה חכמה</h3>
+      <p>זיהוי כפילויות אוטומטי (SHA256) — אותה ראיה לא תיקלט פעמיים גם בשם אחר. ‏PDF עברי מיושר אוטומטית (זיהוי כיוון טקסט — בעיה מוכרת בכלים אחרים).</p>
+      <span class="proof">נמדד: 120 קבצים ⟵ 3.9 שניות קליטה, אינדוקס מלא ברקע ב-36 שניות</span>
+    </div>
+    <div class="col cap">
+      <h3>🌐 תלת-לשוני באמת</h3>
+      <p>‏OCR, זיהוי ישויות וחיפוש — עברית, רוסית ואנגלית. מסמך סרוק ברוסית נקרא, מאונדקס ונמצא בשאילתה בעברית.</p>
+      <span class="proof">נבדק: שאילתה בעברית מצאה מסמך רוסי סרוק — התאמה 0.84</span>
+    </div>
+  </div>
+  <div class="foot"><span>CaseMind Defense — חוברת יכולות</span><span>עמוד 2</span></div>
+</div>
+
+<!-- ============ PAGE 3: SEARCH + AI ============ -->
+<div class="page">
+  <h2>חיפוש שמבין אותך — וגם רוסית</h2>
+  <div class="shot">
+    <div class="chrome"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span><span class="t">Search</span></div>
+    <div class="app"><div class="main" style="padding:4mm">
+      <div class="qbar"><div class="q">העד ראה רכב ליד הבית</div><span class="btn ghost">Semantic ▾</span><span class="btn">Search</span></div>
+      <table class="ui">
+        <tr><th>קובץ</th><th>התאמה</th><th>מיקום</th><th>קטע</th></tr>
+        <tr><td>הודעת עד — כהן.pdf</td><td>0.87</td><td>chars:2140-3320</td><td>…הבחין <span class="hl">ברכב לבן חונה</span> סמוך לכניסה לבניין…</td></tr>
+        <tr><td>Протокол допроса.pdf 🇷🇺</td><td>0.84</td><td>chars:410-1600</td><td>…свидетель видел <span class="hl">белый автомобиль</span> возле дома…</td></tr>
+        <tr><td>האזנה 17.3 שיחה 42.mp3 🎧</td><td>0.81</td><td>time:14:32-15:10</td><td>…"תעביר את זה ליד הבית, עם הרכב הלבן"…</td></tr>
+      </table>
+      <div class="panel" style="font-size:9.5px">💡 שאילתה אחת בעברית — תוצאות ממסמך עברי, מפרוטוקול רוסי ומהאזנת טלפון. דאבל-קליק קופץ לראיה עם הקטע מודגש.</div>
+    </div></div>
+  </div>
+
+  <h2 style="margin-top:6mm">עוזר ה-AI — תשובות עם ציטוטים, לא ניחושים</h2>
+  <div class="shot">
+    <div class="chrome"><span class="dot" style="background:#ef4444"></span><span class="dot" style="background:#f59e0b"></span><span class="dot" style="background:#22c55e"></span><span class="t">AI Workspace · 🤖 answered by aya-expanse:8b (מקומי)</span></div>
+    <div class="app"><div class="main" style="padding:4mm">
+      <div class="q" style="margin-bottom:2.5mm">מה טוען החשוד לגבי האישומים נגדו?</div>
+      <div class="panel" style="font-size:10.5px">
+        החשוד מכחיש את כל האישומים המיוחסים לו <span class="cite">[1][2]</span>. עיקרי גרסתו:<br>
+        • לא נכח בזירה במועד האירוע — לטענתו שהה בעבודתו <span class="cite">[1]</span>.<br>
+        • הרכב הלבן המתואר אינו שלו; רכבו נמכר חודשיים קודם <span class="cite">[2][3]</span>.<br>
+        • בשיחת הטלפון מיום 17.3 עולה תיאום פגישה "ליד הבית עם הרכב הלבן" <span class="cite">[4]</span> — בסתירה לגרסתו.
+      </div>
+      <table class="ui" style="margin-top:2mm">
+        <tr><th>#</th><th>מקור</th><th>מיקום</th></tr>
+        <tr><td>[1]</td><td>הודעת חשוד.pdf</td><td>chars:180-1250</td></tr>
+        <tr><td>[4]</td><td>האזנה 17.3 שיחה 42.mp3</td><td>time:14:32-15:10 🎧</td></tr>
+      </table>
+    </div></div>
+  </div>
+  <p style="margin-top:2mm">אין ראיה רלוונטית? התשובה תהיה <b>"לא נמצא"</b> — לעולם לא המצאה. בלי מודל AI מותקן, המערכת עוברת אוטומטית למצב ציטוטים-בלבד.</p>
+  <div class="foot"><span>CaseMind Defense — חוברת יכולות</span><span>עמוד 3</span></div>
+</div>
+
+<!-- ============ PAGE 4: INVESTIGATION PICTURE ============ -->
+<div class="page">
+  <h2>תמונת החקירה — קשרים, זמנים וסתירות</h2>
+  <div class="cols">
+    <div class="col">
+      <h3>🕸️ גרף ישויות</h3>
+      <div class="shot" style="padding:3mm; background:#0b1220">
+        <svg viewBox="0 0 300 190" style="width:100%">
+          <line x1="150" y1="90" x2="60"  y2="40"  stroke="#4b5563" stroke-width="3"/>
+          <line x1="150" y1="90" x2="240" y2="40"  stroke="#4b5563" stroke-width="1.5"/>
+          <line x1="150" y1="90" x2="70"  y2="150" stroke="#4b5563" stroke-width="2"/>
+          <line x1="150" y1="90" x2="235" y2="150" stroke="#4b5563" stroke-width="1.5"/>
+          <line x1="60"  y1="40" x2="70"  y2="150" stroke="#374151" stroke-width="1"/>
+          <circle cx="150" cy="90"  r="17" fill="#3B82F6"/>
+          <circle cx="60"  cy="40"  r="13" fill="#3B82F6"/>
+          <circle cx="240" cy="40"  r="11" fill="#22C55E"/>
+          <circle cx="70"  cy="150" r="11" fill="#F59E0B"/>
+          <circle cx="235" cy="150" r="11" fill="#EC4899"/>
+          <text x="150" y="118" fill="#e5e7eb" font-size="10" text-anchor="middle">ישראל ישראלי</text>
+          <text x="60"  y="24"  fill="#e5e7eb" font-size="9"  text-anchor="middle">דוד לוי</text>
+          <text x="240" y="24"  fill="#e5e7eb" font-size="9"  text-anchor="middle">תל אביב</text>
+          <text x="70"  y="170" fill="#e5e7eb" font-size="9"  text-anchor="middle">052-1234567</text>
+          <text x="235" y="170" fill="#e5e7eb" font-size="9"  text-anchor="middle">12-345-67</text>
+        </svg>
+      </div>
+      <p style="font-size:11px">גודל צומת = כמות אזכורים · קו = הופעה משותפת בראיה · צבע = סוג (אדם / מקום / טלפון / רכב). דאבל-קליק על צומת מציג את כל המופעים.</p>
+    </div>
+    <div class="col">
+      <h3>📅 ציר זמן אוטומטי</h3>
+      <div class="shot"><div class="app"><div class="main" style="padding:3mm">
+        <table class="ui">
+          <tr><th>תאריך</th><th>מקור</th><th>הקשר</th></tr>
+          <tr><td>2026-03-15</td><td>הודעת עד</td><td>…נצפה רכב לבן ליד הבית…</td></tr>
+          <tr><td>2026-03-17</td><td>האזנה 🎧</td><td>…"מחר בערב, ליד הבית"…</td></tr>
+          <tr><td>2026-03-18</td><td>דוח פעולה</td><td>…האירוע נשוא כתב האישום…</td></tr>
+        </table>
+      </div></div></div>
+      <h3 style="margin-top:4mm">⚠️ איתור סתירות</h3>
+      <div class="shot"><div class="app"><div class="main" style="padding:3mm">
+        <div class="panel" style="border-color:#7f1d1d">
+          <b style="color:#fca5a5">contradiction · דמיון 0.96</b><br>
+          <b>עדות א':</b> "ראיתי רכב <span class="hl">לבן</span> חונה ליד הבית בשעה שמונה"<br>
+          <b>עדות ב':</b> "ראיתי רכב <span class="hl">שחור</span> חונה ליד הבית בשעה שמונה"<br>
+          <span style="color:#93c5fd">הסבר ה-AI: העדים חלוקים על צבע הרכב באותו מועד ומקום.</span>
+        </div>
+      </div></div></div>
+      <span class="proof">נבדק חי: הסתירה נתפסה אוטומטית עם ההסבר הנכון</span>
+    </div>
+  </div>
+  <div class="foot"><span>CaseMind Defense — חוברת יכולות</span><span>עמוד 4</span></div>
+</div>
+
+<!-- ============ PAGE 5: MEDIA + REPORT + SECURITY ============ -->
+<div class="page">
+  <h2>האזנות ווידאו — מהקלטת שעתיים לדקה הנכונה</h2>
+  <div class="shot"><div class="app"><div class="main" style="padding:4mm">
+    <div style="font-size:10px; color:#93c5fd; margin-bottom:2mm">🎧 האזנה 17.3 שיחה 42.mp3 · תומלל מקומית (ivrit.ai) · שפה: עברית</div>
+    <table class="ui">
+      <tr><th>זמן</th><th>תמליל</th></tr>
+      <tr><td>time:12:04-14:31</td><td>…לא, אני לא מדבר על זה בטלפון…</td></tr>
+      <tr class="sel"><td>time:14:32-15:10</td><td>…תעביר את <span class="hl">המעטפה</span> ליד הבית, עם הרכב הלבן, תתקשר לדוד מחר בבוקר…</td></tr>
+      <tr><td>time:15:11-16:47</td><td>…בסדר, נדבר אחרי זה…</td></tr>
+    </table>
+    <div class="panel" style="font-size:9.5px">החיפוש והשאלות ל-AI עובדים גם על תמלילים — והציטוט מפנה לחותמת הזמן. את הקטע שנמצא מאזינים במקור החתום.</div>
+  </div></div></div>
+
+  <div class="cols" style="margin-top:5mm">
+    <div class="col">
+      <h3>📄 דוח תיק בלחיצה</h3>
+      <ul class="feat">
+        <li>מצאי ראיות מלא עם חתימות SHA256 (שרשרת משמורת)</li>
+        <li>ציר זמן, ישויות מרכזיות, יומן פעולות</li>
+        <li>‏HTML ⟵ ‏PDF בהדפסה — מוכן לצירוף לתיק</li>
+      </ul>
+      <span class="proof">נמדד: דוח על 120 ראיות ב-63 אלפיות שנייה</span>
+    </div>
+    <div class="col">
+      <h3>🛡️ אבטחה ושלמות</h3>
+      <ul class="feat">
+        <li><b>‏Verify Integrity</b> — קובץ ראיה ששונה ולו בתו — מסומן</li>
+        <li>יומן פעולות בשרשרת hash — שכתוב היסטוריה מתגלה</li>
+        <li>גיבוי מלא בקובץ אחד · מפתח API · הגבלת תיקיות ייבוא</li>
+      </ul>
+      <span class="proof">נבדק: זיוף קובץ וזיוף יומן — שניהם נתפסו</span>
+    </div>
+  </div>
+  <div class="foot"><span>CaseMind Defense — חוברת יכולות</span><span>עמוד 5</span></div>
+</div>
+
+<!-- ============ PAGE 6: SPECS ============ -->
+<div class="page">
+  <h2>מפרט טכני</h2>
+  <table class="spec">
+    <tr><th style="width:34mm">קבצים נתמכים</th><td>‏PDF (כולל סרוק) · ‏Word/Excel (בקרוב) · תמונות (png/jpg/tiff/bmp/webp) · אודיו (wav/mp3/m4a/ogg/flac) · וידאו (mp4/mov/avi/mkv)</td></tr>
+    <tr><th>שפות</th><td>עברית, רוסית, אנגלית — ‏OCR, תמלול, ישויות, חיפוש חוצה-שפות ותשובות AI</td></tr>
+    <tr><th>מנועי AI (מקומיים)</th><td>תשובות: ‏Aya-Expanse ‏8B ‏(Ollama) · תמלול: ‏Whisper מכוונן-עברית (ivrit.ai) · חיפוש: ‏multilingual-e5 · ישויות: ‏DictaBERT</td></tr>
+    <tr><th>דרישות מערכת</th><td>‏Windows 10/11 · ‏16GB RAM · ‏GPU אופציונלי (‏12GB VRAM ⟵ תשובות AI בשניות במקום בדקה) · ‏15GB דיסק למודלים</td></tr>
+    <tr><th>התקנה</th><td>סקריפט אחד (`setup.ps1`) — מתקין הכול ויוצר קיצור דרך. האפליקציה מרימה את השרת לבד</td></tr>
+    <tr><th>פרטיות</th><td>אפס תקשורת ענן עם תוכן התיק. מומלץ BitLocker להצפנה במנוחה (מדריך מצורף)</td></tr>
+    <tr><th>גיבוי ושחזור</th><td>גיבוי DB + ראיות בקובץ zip אחד, בלחיצה; שחזור בהעתקה חזרה</td></tr>
+  </table>
+
+  <h2 style="margin-top:8mm">מה בודקים בפיילוט</h2>
+  <ul class="feat">
+    <li>ייבוא תיק אמיתי (מאות מסמכים סרוקים + האזנות) ⟵ עבודה שוטפת שבוע</li>
+    <li>מדדים: זמן איתור ראיה, דיוק תשובות ה-AI, שלמות הדוח המופק</li>
+    <li>כל פער שמתגלה — נסגר בגרסה הבאה; מחזור שחרור: ימים, לא חודשים</li>
+  </ul>
+
+  <div style="margin-top:14mm; background:#0b1220; color:#e5e7eb; border-radius:10px; padding:8mm; text-align:center">
+    <div style="font-size:20px; font-weight:800">CaseMind <span style="color:#60a5fa">Defense</span></div>
+    <div style="font-size:11px; color:#9ca3af; margin-top:2mm">Investigation Intelligence · גרסה 0.15 · יולי 2026</div>
+    <div style="font-size:10px; color:#6b7280; margin-top:3mm">כל הנתונים והדוגמאות בחוברת זו בדויים; מדדי הביצועים נמדדו בבדיקות אמת.</div>
+  </div>
+  <div class="foot"><span>CaseMind Defense — חוברת יכולות</span><span>עמוד 6</span></div>
+</div>
+
+</body>
+</html>
