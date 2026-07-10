@@ -23,7 +23,12 @@ def test_import_and_audit(tmp_path):
         p.write_text("The witness saw a white vehicle near the house.", encoding="utf-8")
         r = client.post("/evidence/import-file", json={"path": str(p)})
         assert r.status_code == 200
-        assert r.json()["status"] == "indexed"
+        assert r.json()["status"] == "processing"
+        # TestClient runs background tasks before returning, so the follow-up
+        # GET sees the final status
+        final = client.get(f"/evidence/{r.json()['id']}")
+        assert final.status_code == 200
+        assert final.json()["status"] == "indexed"
         assert client.get("/audit").status_code == 200
 
 def test_duplicate_import(tmp_path):

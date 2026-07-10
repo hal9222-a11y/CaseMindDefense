@@ -13,7 +13,8 @@ def test_import_image_file_does_not_crash(tmp_path):
     assert response.status_code == 200
     data = response.json()
     assert data["filename"] == "ocr_test.png"
-    assert data["status"] in {"ocr_indexed", "no_text_found", "text_extraction_failed"}
+    final = client.get(f"/evidence/{data['id']}").json()
+    assert final["status"] in {"ocr_indexed", "no_text_found", "text_extraction_failed"}
 
 
 def test_import_scanned_pdf_falls_back_to_ocr(tmp_path):
@@ -25,8 +26,8 @@ def test_import_scanned_pdf_falls_back_to_ocr(tmp_path):
     img.save(pdf_path)  # image-only PDF: no text layer for pypdf
     response = client.post("/evidence/import-file", json={"path": str(pdf_path)})
     assert response.status_code == 200
-    data = response.json()
-    assert data["status"] in {"ocr_indexed", "no_text_found", "text_extraction_failed"}
+    final = client.get(f"/evidence/{response.json()['id']}").json()
+    assert final["status"] in {"ocr_indexed", "no_text_found", "text_extraction_failed"}
 
 
 def test_import_unsupported_extraction_gets_clear_status(tmp_path):
@@ -35,4 +36,5 @@ def test_import_unsupported_extraction_gets_clear_status(tmp_path):
     docx_path.write_bytes(b"not really a docx, content does not matter")
     response = client.post("/evidence/import-file", json={"path": str(docx_path)})
     assert response.status_code == 200
-    assert response.json()["status"] == "extraction_not_supported"
+    final = client.get(f"/evidence/{response.json()['id']}").json()
+    assert final["status"] == "extraction_not_supported"

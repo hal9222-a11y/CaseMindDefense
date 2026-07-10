@@ -8,8 +8,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class Case(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class Evidence(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    case_id: Optional[int] = Field(default=None, foreign_key="case.id", index=True)
     original_path: str
     stored_path: str
     filename: str

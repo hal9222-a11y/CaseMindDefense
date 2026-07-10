@@ -16,7 +16,9 @@ class DuplicateEvidenceError(Exception):
 
 SUPPORTED_EXTENSIONS = {".txt", ".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif", ".webp", ".docx", ".xlsx", ".pptx", ".eml", ".msg", ".wav", ".mp3", ".mp4"}
 
-def import_file(session: Session, source_path: str) -> Evidence:
+def register_evidence(session: Session, source_path: str, case_id: int | None = None) -> Evidence:
+    """Fast synchronous part of import: hash, dedupe, copy into the store,
+    insert with status=processing. Text extraction happens in index_evidence."""
     src = Path(source_path).resolve()
     if not src.exists() or not src.is_file():
         raise FileNotFoundError(source_path)
@@ -33,28 +35,43 @@ def import_file(session: Session, source_path: str) -> Evidence:
         shutil.copy2(src, stored)
 
     evidence = Evidence(
+        case_id=case_id,
         original_path=str(src),
         stored_path=str(stored),
         filename=src.name,
         sha256=digest,
         size_bytes=src.stat().st_size,
         mime_type=mimetypes.guess_type(src.name)[0] or "application/octet-stream",
-        status="imported",
+        status="processing",
     )
     session.add(evidence)
     session.commit()
     session.refresh(evidence)
 
-    log_event(session, "evidence_imported", evidence_id=evidence.id, original_path=str(src), stored_path=str(stored), sha256=digest)
+    log_event(session, "evidence_imported", evidence_id=evidence.id, original_path=str(src), stored_path=str(stored), sha256=digest, case_id=case_id)
+    return evidence
+
+
+def index_evidence(session: Session, evidence_id: int) -> Evidence:
+    """Extract text, chunk, embed. Replaces any existing chunks (reindex-safe)."""
+    evidence = session.get(Evidence, evidence_id)
+    if evidence is None:
+        raise ValueError(f"evidence {evidence_id} not found")
+
+    for old_chunk in session.exec(
+        select(EvidenceChunk).where(EvidenceChunk.evidence_id == evidence_id)
+    ).all():
+        session.delete(old_chunk)
+    session.commit()
 
     try:
-        text, extraction_method = extract_text(src)
+        text, extraction_method = extract_text(Path(evidence.stored_path))
     except TextExtractionError as exc:
         evidence.status = "text_extraction_failed"
         session.add(evidence)
         session.commit()
         session.refresh(evidence)
-        log_event(session, "text_extraction_failed", evidence_id=evidence.id, error=str(exc), source_path=str(src))
+        log_event(session, "text_extraction_failed", evidence_id=evidence.id, error=str(exc))
         return evidence
 
     chunks = chunk_text_with_offsets(text)
@@ -86,7 +103,15 @@ def import_file(session: Session, source_path: str) -> Evidence:
     log_event(session, "evidence_indexed", evidence_id=evidence.id, chunks=len(chunks))
     return evidence
 
-def import_folder(session: Session, folder_path: str) -> dict:
+
+def import_file(session: Session, source_path: str, case_id: int | None = None) -> Evidence:
+    """Synchronous register + index (used by folder import and tests;
+    the API endpoint runs index_evidence as a background task instead)."""
+    evidence = register_evidence(session, source_path, case_id=case_id)
+    return index_evidence(session, evidence.id)
+
+
+def import_folder(session: Session, folder_path: str, case_id: int | None = None) -> dict:
     root = Path(folder_path).resolve()
     if not root.exists() or not root.is_dir():
         raise FileNotFoundError(folder_path)
@@ -96,7 +121,7 @@ def import_folder(session: Session, folder_path: str) -> dict:
             continue
         result["scanned"] += 1
         try:
-            import_file(session, str(path))
+            import_file(session, str(path), case_id=case_id)
             result["imported"] += 1
         except DuplicateEvidenceError:
             result["duplicates"] += 1

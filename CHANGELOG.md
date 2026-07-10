@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (sprint 0.12.5 — Scale Foundation)
+
+- Case entity: create/list cases, import into a case, filter evidence by case
+- Imports return immediately (`processing`) and index in the background;
+  `GET /evidence/{id}` polls status; `POST /evidence/{id}/reindex` rebuilds chunks
+- Keyword search served by SQLite FTS5 (trigger-synced, LIKE fallback)
+
 ## Unreleased (sprint 0.12.4 — Investigation Views)
 
 - Timeline, Entities, and Contradictions pages show live data (no
