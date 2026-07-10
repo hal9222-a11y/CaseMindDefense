@@ -3,38 +3,37 @@
 | Version | Theme | Status |
 |---------|-------|--------|
 | v0.11 | Backend Hardening | ✅ Done |
-| v0.12 | Desktop Workspace | 🔨 Current |
-| v0.13 | AI Investigation Workspace | Planned |
-| v0.14 | Reporting | Planned |
-| v1.0 | Commercial Release | Planned |
+| v0.12 | Desktop Workspace | ✅ Done |
+| v0.13 | AI Investigation Workspace (MVP) | ✅ Done |
+| v0.14 | Reporting | ✅ Done |
+| v0.15 | Security & Install Path | ✅ Done (tag `v0.15.0`) |
+| v1.0 | Commercial Release | 🔨 Current |
 
-## v0.12 — Desktop Workspace (current)
+## v1.0 — Commercial Release (current)
 
-- 0.12.1: modular widget refactor, controller layer, background API workers, three-panel workspace, preview engine (TXT/images, PDF placeholder)
-- 0.12.2: Semantic Search workspace
-- 0.12.3: AI workspace
-- 0.12.4: Timeline & Entity Graph views
+Gate: a real pilot. Build only what pilot users actually hit.
 
-## v0.13 — AI Investigation Workspace
-
-- Local LLM (Ollama) RAG over indexed chunks — every answer cites `chars:start-end`, "not found" when evidence is missing
-- Bilingual embedding model (e.g. multilingual-e5)
-- Hebrew NER (DictaBERT) replacing regex entities
-- Contradiction detection: semantic pairing + NLI/LLM verdict
-
-## v0.14 — Reporting
-
-- Case reports with citation navigation
-- Export (PDF/DOCX) with chain-of-custody appendix
-
-## v1.0 — Commercial Release
-
-- Installer, backup/recovery, auth + permissions, monitoring, plugin system, full docs
+- **MVP acceptance test**: a real criminal case (hundreds of scanned
+  Hebrew documents) end to end — findings drive the rest of v1.0
+- Permissions / multi-user — only if a pilot needs it
+- Licensing / activation decision
+- Polish from pilot feedback
 
 ## Cross-cutting backlog
 
-- `Case` entity (multi-case separation) — earlier is cheaper
-- FTS5 (keyword) + sqlite-vec (semantic) — stop scanning chunks in Python
-- Background indexing pipeline with live status
-- API key + path validation on import endpoints
-- Verify Hebrew text-layer PDFs against pypdf RTL issue (py-pdf/pypdf#1589)
+- sqlite-vec KNN for semantic search and contradiction pairing
+  (Python scan fine below ~100k chunks)
+- DOCX report export (if lawyers need to edit reports in Word)
+- Contradictions page progress indicator (first load runs LLM ~2 min)
+- Alembic when schema churn outgrows naive ALTER migrations
+- Entity cleanup: strip ב/ל prefixes from locations, drop subword-broken names
+- Plugin architecture — post-1.0 unless a concrete plugin appears
+
+## Done highlights
+
+- Hebrew end-to-end: OCR (eng+heb), RTL-correct PDF extraction with
+  visual/logical detection, DictaBERT NER, bilingual e5 embeddings,
+  Hebrew LLM answers with citations — all local
+- Legal admissibility: SHA256 chain of custody, tamper detection for
+  files and for the audit log (hash chain), one-zip backup, case reports
+- Scale foundation: FTS5, background indexing, reindex path, Case entity

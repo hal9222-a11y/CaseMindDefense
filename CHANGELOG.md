@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (sprint 0.15 — Security)
+## v0.15.0 — 2026-07-10 · Security & Install Path
 
 - Desktop auto-starts the backend on launch (no more manual uvicorn)
 - `scripts/setup.ps1`: one-shot clean-machine install (Python, venvs,
@@ -14,14 +14,14 @@
 - Desktop Settings page replaces the last placeholder (key status,
   integrity check, backup)
 
-## Unreleased (sprint 0.14 — Reporting)
+## v0.14 — 2026-07-10 · Reporting
 
 - Case reports: `POST /reports` renders a self-contained RTL Hebrew HTML
   report — evidence inventory with SHA256 chain of custody, case
   timeline, top entities, audit trail; desktop Report button generates
   and opens it (Ctrl+P → PDF)
 
-## Unreleased (sprint 0.13 — AI Workspace)
+## v0.13 — 2026-07-10 · AI Investigation Workspace (MVP)
 
 - Entity co-occurrence graph (`/entities/graph` + desktop page: circle
   layout, node size by mentions, color by type, double-click searches)
@@ -53,14 +53,14 @@
 - Small-model artifact cleanup and question-language pinning (Hebrew
   answers stay Hebrew)
 
-## Unreleased (sprint 0.12.5 — Scale Foundation)
+## v0.12.5 — 2026-07-10 · Scale Foundation
 
 - Case entity: create/list cases, import into a case, filter evidence by case
 - Imports return immediately (`processing`) and index in the background;
   `GET /evidence/{id}` polls status; `POST /evidence/{id}/reindex` rebuilds chunks
 - Keyword search served by SQLite FTS5 (trigger-synced, LIKE fallback)
 
-## Unreleased (sprint 0.12.4 — Investigation Views)
+## v0.12.4 — 2026-07-10 · Investigation Views
 
 - Timeline, Entities, and Contradictions pages show live data (no
   placeholders left except Settings); pages lazy-load on first open
@@ -69,7 +69,7 @@
 - Timeline double-click opens the evidence with the snippet highlighted
 - Contradictions page marked experimental until the v0.13 engine
 
-## Unreleased (sprint 0.12.2 — Search Workspace)
+## v0.12.2 — 2026-07-10 · Search Workspace
 
 - Search mode toggle: Semantic / Keyword in one search page
 - Citation navigation: double-clicking a search result or AI citation
@@ -77,7 +77,7 @@
   highlighted in the text preview; PDF citations show the cited excerpt
   until real PDF rendering lands
 
-## Unreleased (sprint 0.12.1 — Desktop Workspace)
+## v0.12.1 — 2026-07-10 · Desktop Workspace
 
 - Search and AI pages rebuilt on the widget pattern with a shared results
   table (`ResultsTableWidget`) — ready for citation navigation in 0.12.2;
