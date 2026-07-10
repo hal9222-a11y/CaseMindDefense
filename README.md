@@ -4,8 +4,9 @@ Local-first **Investigation Intelligence Platform** — secure evidence manageme
 
 Built for defense lawyers, investigators, and enforcement teams. All data stays on your machine.
 
-- 📖 [Vision](docs/VISION.md) · [Architecture](ARCHITECTURE.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
-- 🔨 Current sprint: [0.12.1 — Desktop Workspace](docs/SPRINT_0.12.1_DESKTOP_WORKSPACE.md)
+- 📖 [User Guide (עברית)](docs/USER_GUIDE.md) · [Vision](docs/VISION.md) · [Architecture](ARCHITECTURE.md) · [Security Model](docs/SECURITY.md) · [Roadmap](ROADMAP.md) · [Changelog](CHANGELOG.md)
+- 🏷️ Current release: **v0.15.0** — MVP + reporting + security. Next: [v1.0](ROADMAP.md)
+- ⚡ Quick install on a clean machine: `powershell -ExecutionPolicy Bypass -File scripts\setup.ps1`
 
 ## Features
 
