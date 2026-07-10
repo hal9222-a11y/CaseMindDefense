@@ -45,6 +45,7 @@ class EvidencePage(QWidget):
 
         self.toolbar.refresh_clicked.connect(self._refresh)
         self.toolbar.import_clicked.connect(self._pick_and_import)
+        self.toolbar.import_folder_clicked.connect(self._pick_and_import_folder)
         self.toolbar.new_case_clicked.connect(self._create_case)
         self.toolbar.report_clicked.connect(self._generate_report)
         self.toolbar.case_changed.connect(lambda _case_id: self._refresh())
@@ -95,6 +96,36 @@ class EvidencePage(QWidget):
             on_done=lambda _case: self._load_cases(),
             on_error=lambda err: QMessageBox.critical(self, "Create Case Failed", err),
         )
+
+    def _pick_and_import_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Import Folder — כל הקבצים הנתמכים ייקלטו, כולל תתי-תיקיות")
+        if not folder:
+            return
+        self.toolbar.set_busy(True)
+        run_async(
+            self.api.import_evidence_folder,
+            folder,
+            self.toolbar.current_case_id(),
+            on_done=self._on_folder_imported,
+            on_error=self._on_import_failed,
+        )
+
+    def _on_folder_imported(self, result: dict[str, Any]) -> None:
+        self.toolbar.set_busy(True)  # stays busy through the refresh
+        self._refresh()
+        errors = result.get("errors") or []
+        message = (
+            f"נסרקו: {result.get('scanned', 0)} קבצים\n"
+            f"נקלטו: {result.get('registered', 0)}\n"
+            f"כפולים (דולגו): {result.get('duplicates', 0)}\n"
+            f"שגיאות: {len(errors)}\n\n"
+            "העיבוד (OCR / תמלול / אינדוקס) רץ ברקע — Refresh יראה התקדמות."
+        )
+        if errors:
+            message += "\n\nשגיאות ראשונות:\n" + "\n".join(
+                f"- {e.get('path', '')}: {e.get('error', '')}" for e in errors[:5]
+            )
+        QMessageBox.information(self, "Folder Import", message)
 
     def _generate_report(self) -> None:
         run_async(
