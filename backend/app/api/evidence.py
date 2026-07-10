@@ -4,8 +4,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from sqlmodel import delete as sql_delete
+
 from app.db import get_engine, get_session
-from app.models.evidence import Evidence
+from app.models.evidence import Evidence, EvidenceChunk, ExtractedEntity
+from app.services.audit_service import log_event
 from app.services.evidence_service import (
     SUPPORTED_EXTENSIONS,
     DuplicateEvidenceError,
@@ -124,6 +127,31 @@ def import_folder_endpoint(
     if registered_ids:
         background.add_task(_index_in_background, registered_ids)
     return result
+
+
+@router.delete("/{evidence_id}")
+def delete_evidence(evidence_id: int, session: Session = Depends(get_session)):
+    ev = session.get(Evidence, evidence_id)
+    if not ev:
+        raise HTTPException(status_code=404, detail="evidence not found")
+
+    # chunk deletes go through the ORM so the FTS triggers fire per row
+    for chunk in session.exec(
+        select(EvidenceChunk).where(EvidenceChunk.evidence_id == evidence_id)
+    ).all():
+        session.delete(chunk)
+    session.exec(sql_delete(ExtractedEntity).where(ExtractedEntity.evidence_id == evidence_id))
+
+    stored = Path(ev.stored_path)
+    filename = ev.filename
+    session.delete(ev)
+    session.commit()
+
+    if stored.exists():
+        stored.unlink()
+
+    log_event(session, "evidence_deleted", evidence_id=evidence_id, filename=filename)
+    return {"deleted": evidence_id}
 
 
 @router.post("/{evidence_id}/reindex")

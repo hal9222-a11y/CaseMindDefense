@@ -42,6 +42,21 @@ def test_reindex_rebuilds_chunks(tmp_path):
         assert final["status"] == "indexed"
 
 
+def test_delete_evidence_removes_everything(tmp_path):
+    with TestClient(app) as client:
+        marker = uuid.uuid4().hex
+        p = tmp_path / f"todelete_{marker}.txt"
+        p.write_text(f"delete me {marker}", encoding="utf-8")
+        ev = client.post("/evidence/import-file", json={"path": str(p)}).json()
+
+        assert client.delete(f"/evidence/{ev['id']}").status_code == 200
+        assert client.get(f"/evidence/{ev['id']}").status_code == 404
+        results = client.get("/search", params={"q": marker, "limit": 5}).json()
+        assert results == []
+        # re-import works (hash no longer registered)
+        assert client.post("/evidence/import-file", json={"path": str(p)}).status_code == 200
+
+
 def test_import_folder_registers_and_indexes(tmp_path):
     with TestClient(app) as client:
         marker = uuid.uuid4().hex
