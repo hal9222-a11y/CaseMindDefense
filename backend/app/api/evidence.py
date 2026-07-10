@@ -12,6 +12,7 @@ from app.services.audit_service import log_event
 from app.services.evidence_service import (
     SUPPORTED_EXTENSIONS,
     DuplicateEvidenceError,
+    ImportPathNotAllowedError,
     index_evidence,
     register_evidence,
 )
@@ -94,6 +95,8 @@ def import_file_endpoint(
         )
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="file not found")
+    except ImportPathNotAllowedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
 
     background.add_task(_index_in_background, [ev.id])
     return _evidence_dict(ev)

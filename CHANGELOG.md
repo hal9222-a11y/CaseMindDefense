@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased (sprint 0.15 — Security)
+
+- API key auth (`CASEMIND_API_KEY` + `X-API-Key`, `/health` exempt)
+- Import path allowlist (`CASEMIND_IMPORT_ROOTS`) → 403 outside
+- Tamper detection: `POST /admin/verify-evidence` re-hashes the store
+- One-zip backup: `POST /admin/backup` (consistent SQLite snapshot)
+- Desktop Settings page replaces the last placeholder (key status,
+  integrity check, backup)
+
 ## Unreleased (sprint 0.14 — Reporting)
 
 - Case reports: `POST /reports` renders a self-contained RTL Hebrew HTML

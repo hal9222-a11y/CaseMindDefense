@@ -1,4 +1,5 @@
 import mimetypes
+import os
 import shutil
 from pathlib import Path
 from sqlmodel import Session, select
@@ -15,6 +16,24 @@ class DuplicateEvidenceError(Exception):
         super().__init__(f"Duplicate evidence: existing id {existing_id}")
         self.existing_id = existing_id
 
+
+class ImportPathNotAllowedError(Exception):
+    pass
+
+
+def _check_import_allowed(path: Path) -> None:
+    """When CASEMIND_IMPORT_ROOTS is set (os.pathsep-separated directories),
+    imports are restricted to those trees — blocks the API from being used
+    to read arbitrary system files. Unset = open local mode."""
+    roots = os.getenv("CASEMIND_IMPORT_ROOTS")
+    if not roots:
+        return
+    for root in roots.split(os.pathsep):
+        root = root.strip()
+        if root and path.is_relative_to(Path(root).resolve()):
+            return
+    raise ImportPathNotAllowedError(f"import path outside allowed roots: {path}")
+
 SUPPORTED_EXTENSIONS = {".txt", ".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif", ".webp", ".docx", ".xlsx", ".pptx", ".eml", ".msg", ".wav", ".mp3", ".mp4"}
 
 def register_evidence(session: Session, source_path: str, case_id: int | None = None) -> Evidence:
@@ -23,6 +42,7 @@ def register_evidence(session: Session, source_path: str, case_id: int | None = 
     src = Path(source_path).resolve()
     if not src.exists() or not src.is_file():
         raise FileNotFoundError(source_path)
+    _check_import_allowed(src)
 
     digest = sha256_file(src)
     existing = session.exec(select(Evidence).where(Evidence.sha256 == digest)).first()
