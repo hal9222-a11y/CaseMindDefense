@@ -64,6 +64,16 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def generate_report(self, case_id: int | None = None) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if case_id is not None:
+            body["case_id"] = case_id
+        response = requests.post(
+            self._url(endpoints.REPORTS), json=body, timeout=60
+        )
+        response.raise_for_status()
+        return response.json()
+
     def entity_graph(self, max_nodes: int = 30) -> dict[str, Any]:
         response = requests.get(
             self._url(endpoints.ENTITY_GRAPH),

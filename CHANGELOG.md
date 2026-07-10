@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (sprint 0.14 — Reporting)
+
+- Case reports: `POST /reports` renders a self-contained RTL Hebrew HTML
+  report — evidence inventory with SHA256 chain of custody, case
+  timeline, top entities, audit trail; desktop Report button generates
+  and opens it (Ctrl+P → PDF)
+
 ## Unreleased (sprint 0.13 — AI Workspace)
 
 - Entity co-occurrence graph (`/entities/graph` + desktop page: circle

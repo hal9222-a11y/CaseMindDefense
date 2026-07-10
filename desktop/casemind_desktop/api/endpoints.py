@@ -12,6 +12,7 @@ TIMELINE = "/timeline"
 ENTITIES = "/entities"
 ENTITY_GRAPH = "/entities/graph"
 CASES = "/cases"
+REPORTS = "/reports"
 CONTRADICTIONS = "/contradictions"
 AUDIT = "/audit"
 
