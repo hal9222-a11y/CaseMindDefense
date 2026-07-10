@@ -11,10 +11,16 @@ from sqlmodel import Session, select
 from app.core.settings import get_settings
 from app.db import get_session
 from app.models.evidence import Evidence
-from app.services.audit_service import log_event
+from app.services.audit_service import log_event, verify_audit_chain
 from app.services.hash_service import sha256_file
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.post("/verify-audit")
+def verify_audit(session: Session = Depends(get_session)):
+    """Audit-log tamper detection: recomputes the event hash chain."""
+    return verify_audit_chain(session)
 
 
 @router.post("/verify-evidence")

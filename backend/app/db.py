@@ -29,6 +29,10 @@ _MIGRATIONS = {
     "evidence": {
         "case_id": "INTEGER",
     },
+    "auditevent": {
+        "prev_hash": "TEXT NOT NULL DEFAULT ''",
+        "event_hash": "TEXT NOT NULL DEFAULT ''",
+    },
 }
 
 
