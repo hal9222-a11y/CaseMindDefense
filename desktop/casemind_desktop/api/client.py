@@ -42,6 +42,13 @@ class ApiClient:
             json=body,
             timeout=REQUEST_TIMEOUT,
         )
+        if response.status_code == 409:
+            detail = response.json().get("detail") or {}
+            existing = detail.get("existing_id")
+            raise RuntimeError(
+                f"הקובץ הזה כבר קיים במערכת (ראיה מספר {existing}).\n"
+                "זיהוי כפילויות לפי SHA256 — אותו קובץ לא ייקלט פעמיים."
+            )
         response.raise_for_status()
         return response.json()
 

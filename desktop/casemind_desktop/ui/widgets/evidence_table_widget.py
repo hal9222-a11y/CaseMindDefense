@@ -9,7 +9,8 @@ from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 class EvidenceTableWidget(QTableWidget):
     evidence_selected = Signal(dict)
 
-    HEADERS = ["ID", "Filename", "Type", "Size", "Status", "Imported", "SHA256"]
+    # SHA256 and full paths live in the Inspector; keep the table scannable
+    HEADERS = ["ID", "Filename", "Type", "Size", "Status", "Imported"]
 
     def __init__(self) -> None:
         super().__init__()
@@ -20,6 +21,7 @@ class EvidenceTableWidget(QTableWidget):
         self.setHorizontalHeaderLabels(self.HEADERS)
         self.setSelectionBehavior(QTableWidget.SelectRows)
         self.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.verticalHeader().setVisible(False)
         self.itemSelectionChanged.connect(self._on_selection_changed)
 
         header = self.horizontalHeader()
@@ -34,11 +36,10 @@ class EvidenceTableWidget(QTableWidget):
             values = [
                 str(item.get("id", "")),
                 item.get("filename", ""),
-                item.get("mime_type", ""),
-                str(item.get("size_bytes", "")),
+                (item.get("mime_type") or "").split("/")[-1],
+                self._human_size(item.get("size_bytes") or 0),
                 item.get("status", ""),
-                item.get("imported_at", ""),
-                self._short_hash(item.get("sha256", "")),
+                (item.get("imported_at") or "")[:16].replace("T", " "),
             ]
             for col, value in enumerate(values):
                 cell = QTableWidgetItem(value)
@@ -58,5 +59,9 @@ class EvidenceTableWidget(QTableWidget):
         return False
 
     @staticmethod
-    def _short_hash(value: str) -> str:
-        return f"{value[:16]}..." if value else ""
+    def _human_size(size_bytes: int) -> str:
+        if size_bytes >= 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+        if size_bytes >= 1024:
+            return f"{size_bytes / 1024:.0f} KB"
+        return f"{size_bytes} B"
