@@ -2,6 +2,12 @@
 
 ## Unreleased (sprint 0.13 — AI Workspace)
 
+- Real contradiction engine: semantically similar chunk pairs across
+  different evidence are judged by the local LLM; consistent pairs are
+  dropped, contradictions come with an explanation; without an LLM the
+  top pairs are returned as `unverified`. Desktop page shows verdict /
+  files / similarity / explanation and double-click opens evidence A
+
 - Hebrew NER via DictaBERT: entities extracted at index time into an
   `extractedentity` table (person / organization / location / time +
   deterministic phone / ID / plate patterns), aggregated by `/entities`;

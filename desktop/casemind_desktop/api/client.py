@@ -82,9 +82,10 @@ class ApiClient:
         return response.json()
 
     def contradictions(self) -> list[dict[str, Any]]:
+        # LLM verdicts on candidate pairs take longer than normal calls
         response = requests.get(
             self._url(endpoints.CONTRADICTIONS),
-            timeout=REQUEST_TIMEOUT,
+            timeout=180,
         )
         response.raise_for_status()
         return response.json()

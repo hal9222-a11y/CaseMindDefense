@@ -49,7 +49,18 @@ citation-only mode when no LLM is available.
 - Known quirks for later: subword-truncated names, prepositions glued
   to locations (strip ב/ל prefixes)
 
+## Delivered (part 4 — contradiction engine)
+
+- Candidate pairs: cosine ≥ threshold (env-tunable) across different
+  evidence, capped chunks/pairs (O(n²) documented ceiling — sqlite-vec
+  KNN when corpora grow); LLM verdict drops consistent pairs and
+  explains contradictions; `unverified` mode without Ollama
+- Live catch: two witness statements disagreeing on the car color were
+  flagged with the correct explanation ("The car colors are different")
+- Known limits (3B model): occasional false positives on metadata-only
+  differences; explanations kept in English (Hebrew pinning produced
+  mixed-script output) — larger CASEMIND_LLM_MODEL improves both
+
 ## Remaining in v0.13
-- Contradiction engine (semantic pairing + NLI/LLM verdict)
 - Entity graph view
 - Desktop: show answer mode/model in the AI page

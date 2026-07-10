@@ -65,6 +65,19 @@ def synthesize_answer(question: str, citations: list[dict]) -> str | None:
         ],
         "options": {"temperature": 0.1},
     }
+    content = _chat(payload["messages"])
+    if content is None:
+        return None
+    return _clean_answer(content, len(citations)) or None
+
+
+def _chat(messages: list[dict]) -> str | None:
+    payload = {
+        "model": LLM_MODEL,
+        "stream": False,
+        "messages": messages,
+        "options": {"temperature": 0.1},
+    }
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
         data=json.dumps(payload).encode("utf-8"),
@@ -73,11 +86,46 @@ def synthesize_answer(question: str, citations: list[dict]) -> str | None:
     try:
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_SECONDS) as resp:
             body = json.load(resp)
-        answer = (body.get("message", {}).get("content") or "").strip()
-        return _clean_answer(answer, len(citations)) or None
+        return (body.get("message", {}).get("content") or "").strip() or None
     except Exception as exc:
-        logger.warning("LLM synthesis failed, falling back to citations-only: %s", exc)
+        logger.warning("LLM call failed: %s", exc)
         return None
+
+
+CONTRADICTION_PROMPT = """You compare two evidence excerpts from a criminal case.
+Decide if they CONTRADICT each other: incompatible factual claims about
+events, people, places, times, or objects.
+
+NOT contradictions: differences in file names, ID numbers, reference codes,
+random markers, or formatting. Two documents merely describing different
+things are CONSISTENT.
+
+Reply with EXACTLY one line:
+CONTRADICTION | <one short sentence explaining the conflict>
+or
+CONSISTENT"""
+
+
+def judge_contradiction(text_a: str, text_b: str) -> dict | None:
+    """Returns {'verdict': 'contradiction'|'consistent', 'explanation': str},
+    or None when the LLM is unavailable/unparseable."""
+    # explanation intentionally not language-pinned: the default 3B model
+    # produces clean English but mixed-script Hebrew; larger models via
+    # CASEMIND_LLM_MODEL improve this
+    content = _chat([
+        {"role": "system", "content": CONTRADICTION_PROMPT},
+        {"role": "user", "content": f"Excerpt A:\n{text_a}\n\nExcerpt B:\n{text_b}"},
+    ])
+    if content is None:
+        return None
+    first_line = content.splitlines()[0].strip()
+    upper = first_line.upper()
+    if upper.startswith("CONTRADICTION"):
+        explanation = first_line.split("|", 1)[1].strip() if "|" in first_line else ""
+        return {"verdict": "contradiction", "explanation": explanation}
+    if upper.startswith("CONSISTENT"):
+        return {"verdict": "consistent", "explanation": ""}
+    return None
 
 
 def _clean_answer(answer: str, citation_count: int) -> str:

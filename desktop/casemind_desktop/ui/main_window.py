@@ -67,14 +67,21 @@ class MainWindow(QMainWindow):
         )
         self.contradictions_page = DataPage(
             "Contradictions",
-            [("Type", "type"), ("Chunk A", "chunk_a"), ("Chunk B", "chunk_b")],
+            [
+                ("Verdict", "verdict"),
+                ("File A", "filename_a"),
+                ("File B", "filename_b"),
+                ("Similarity", "similarity"),
+                ("Explanation", "explanation"),
+            ],
             self.api.contradictions,
-            note="experimental — real detection engine lands in v0.13",
+            note="LLM-judged similar pairs — double-click opens evidence A",
         )
 
         self.search_page.results.result_selected.connect(self._open_citation)
         self.ai_page.citations.result_selected.connect(self._open_citation)
         self.timeline_page.table.row_activated.connect(self._open_citation)
+        self.contradictions_page.table.row_activated.connect(self._open_citation)
         self.entities_page.table.row_activated.connect(self._search_entity)
 
         self.pages = QStackedWidget()
