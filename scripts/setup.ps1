@@ -39,8 +39,20 @@ $tesseract = @(
 if (-not $tesseract) {
     Write-Host "Tesseract not found - installing (UB Mannheim build)..."
     winget install --id UB-Mannheim.TesseractOCR -e --accept-source-agreements --accept-package-agreements
-    Write-Host "NOTE: verify the Hebrew language pack (heb) is installed; rerun the installer and tick 'Hebrew' under additional languages if OCR of Hebrew scans fails." -ForegroundColor Yellow
 } else { Write-Host "Found: $tesseract" }
+
+# language packs (Hebrew + Russian) into an app-managed tessdata dir -
+# Program Files needs elevation, and the base install ships English only
+$tessdata = "$root\backend\data\tessdata"
+New-Item -ItemType Directory -Force $tessdata | Out-Null
+$src = "$env:ProgramFiles\Tesseract-OCR\tessdata"
+if (Test-Path $src) { Copy-Item "$src\*.traineddata" $tessdata -Force -ErrorAction SilentlyContinue }
+foreach ($lang in @("heb", "rus")) {
+    if (-not (Test-Path "$tessdata\$lang.traineddata")) {
+        Write-Host "Downloading OCR language pack: $lang"
+        Invoke-WebRequest -Uri "https://github.com/tesseract-ocr/tessdata_fast/raw/main/$lang.traineddata" -OutFile "$tessdata\$lang.traineddata" -UseBasicParsing
+    }
+}
 
 # --- 5. Ollama (optional, for AI answers) -------------------------------
 Step "Checking Ollama (local AI)"
