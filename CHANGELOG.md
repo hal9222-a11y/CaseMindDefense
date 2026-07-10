@@ -2,6 +2,11 @@
 
 ## Unreleased (sprint 0.15 — Security)
 
+- Desktop auto-starts the backend on launch (no more manual uvicorn)
+- `scripts/setup.ps1`: one-shot clean-machine install (Python, venvs,
+  Tesseract, optional Ollama, Desktop shortcut)
+- Backend logs to rotating `data/logs/backend.log`
+
 - API key auth (`CASEMIND_API_KEY` + `X-API-Key`, `/health` exempt)
 - Import path allowlist (`CASEMIND_IMPORT_ROOTS`) → 403 outside
 - Tamper detection: `POST /admin/verify-evidence` re-hashes the store

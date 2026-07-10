@@ -17,11 +17,24 @@
 - **Desktop Settings page** (last placeholder gone): connection + key
   status, Verify Integrity and Create Backup buttons with results.
 
+## Delivered (part 2 — install path)
+
+- **Backend auto-start**: the desktop app checks `/health` on launch and
+  starts the backend itself (hidden, survives app close so restarts are
+  instant); clear guidance dialog if the venv is missing. Verified live:
+  backend down → app alone → backend answering within ~2s.
+- **`scripts/setup.ps1`**: one-shot clean-machine setup — Python via
+  winget if missing, both venvs + deps, Tesseract (UB Mannheim, Hebrew
+  note), optional Ollama + model pull, Desktop shortcut running
+  `pythonw` (no console window).
+- **File logging**: rotating `data/logs/backend.log` (2MB ×3).
+- **PyInstaller deliberately skipped**: torch/transformers make a
+  multi-GB brittle bundle; a venv-based install with a shortcut is
+  robust and updatable (`git pull` + rerun setup). Revisit only if
+  pilot users can't run a .ps1.
+
 ## Remaining in v0.15
 
-- PyInstaller installer (desktop auto-starts backend; Tesseract/Ollama
-  guided install)
-- Structured file logging
 - Encryption at rest (evaluate: SQLCipher vs OS-level BitLocker guidance)
 
 ## Verified
