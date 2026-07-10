@@ -50,22 +50,16 @@ def synthesize_answer(question: str, citations: list[dict]) -> str | None:
     else:
         language_rule = "Answer strictly in the language of the question."
 
-    payload = {
-        "model": LLM_MODEL,
-        "stream": False,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    f"Evidence excerpts:\n\n{excerpts}\n\n"
-                    f"Question: {question}\n\n{language_rule}"
-                ),
-            },
-        ],
-        "options": {"temperature": 0.1},
-    }
-    content = _chat(payload["messages"])
+    content = _chat([
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": (
+                f"Evidence excerpts:\n\n{excerpts}\n\n"
+                f"Question: {question}\n\n{language_rule}"
+            ),
+        },
+    ])
     if content is None:
         return None
     return _clean_answer(content, len(citations)) or None
