@@ -5,6 +5,7 @@ import os
 from functools import lru_cache
 
 from app.services.entity_service import (
+    CYRILLIC_ENTITY_RE,
     HEBREW_STOPWORDS,
     HEBREW_TOKEN_RE,
     ISRAELI_ID_RE,
@@ -67,6 +68,11 @@ def extract_entities(text: str) -> list[dict]:
                 entities.append({"text": word, "label": label})
         except Exception as exc:
             logger.warning("NER inference failed on chunk: %s", exc)
+
+    # Cyrillic names always via regex: the Hebrew NER model does not
+    # cover Russian, and Russian capitalization makes this reliable
+    for entity in CYRILLIC_ENTITY_RE.findall(text):
+        entities.append({"text": entity, "label": "name"})
 
     for phone in PHONE_RE.findall(text):
         entities.append({"text": phone.strip(), "label": "phone"})

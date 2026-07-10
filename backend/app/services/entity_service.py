@@ -8,6 +8,7 @@ from app.models.evidence import EvidenceChunk
 
 
 LATIN_ENTITY_RE = re.compile(r"\b[A-Z][a-zA-Z]{2,}\b")
+CYRILLIC_ENTITY_RE = re.compile(r"\b[А-ЯЁ][а-яё]{2,}\b")
 HEBREW_TOKEN_RE = re.compile(r"[\u0590-\u05FF]{2,}")
 # (?<!\d) instead of \b: there is no word boundary between a space and "+",
 # so \b(?:\+972...) can never match international numbers

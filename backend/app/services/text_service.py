@@ -12,7 +12,7 @@ import pytesseract
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
-OCR_LANGS = "eng+heb"
+PREFERRED_OCR_LANGS = ("eng", "heb", "rus")
 PDF_OCR_RENDER_SCALE = 2.0  # ~144 dpi; raise if OCR quality is poor on small print
 # ponytail: OCR now runs in background indexing, but the page cap stays as a
 # resource guard (CPU-minutes per file); raise the env var for full books
@@ -37,10 +37,31 @@ def _configure_tesseract() -> None:
     for candidate in candidates:
         if candidate and Path(candidate).exists():
             pytesseract.pytesseract.tesseract_cmd = str(candidate)
-            return
+            break
+
+    # app-managed language packs (used when Program Files is not writable)
+    local_tessdata = Path(__file__).resolve().parents[2] / "data" / "tessdata"
+    if "TESSDATA_PREFIX" not in os.environ and local_tessdata.exists():
+        os.environ["TESSDATA_PREFIX"] = str(local_tessdata)
+
+
+def _detect_ocr_langs() -> str:
+    """OCR languages: env override, else the preferred set intersected with
+    what this Tesseract actually has — asking for a missing language pack
+    makes every OCR call fail."""
+    override = os.getenv("CASEMIND_OCR_LANGS")
+    if override:
+        return override
+    try:
+        installed = set(pytesseract.get_languages(config=""))
+    except Exception:
+        return "eng"
+    langs = [lang for lang in PREFERRED_OCR_LANGS if lang in installed]
+    return "+".join(langs) or "eng"
 
 
 _configure_tesseract()
+OCR_LANGS = _detect_ocr_langs()
 
 
 def _is_image(path: Path) -> bool:
