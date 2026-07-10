@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QPen
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QGraphicsEllipseItem,
     QGraphicsScene,
@@ -134,7 +134,7 @@ class _GraphView(QGraphicsView):
     def __init__(self, scene: QGraphicsScene, on_node_double_clicked) -> None:
         super().__init__(scene)
         self._on_node_double_clicked = on_node_double_clicked
-        self.setRenderHints(self.renderHints())
+        self.setRenderHint(QPainter.Antialiasing)
         self.setDragMode(QGraphicsView.ScrollHandDrag)
 
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 (Qt override)

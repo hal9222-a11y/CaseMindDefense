@@ -1,10 +1,17 @@
 import hashlib
 import json
+import threading
 from typing import Any
 
 from sqlmodel import Session, select
 
 from app.models.evidence import AuditEvent
+
+# the chain read-last -> commit must be atomic: a request handler and a
+# background indexing task logging concurrently would both read the same
+# tail and fork the chain, making verify_audit_chain report a false break.
+# ponytail: in-process lock (uvicorn runs one process); revisit for multi-worker
+_chain_lock = threading.Lock()
 
 
 def _hash_event(prev_hash: str, event: AuditEvent) -> str:
@@ -22,22 +29,21 @@ def _hash_event(prev_hash: str, event: AuditEvent) -> str:
 
 
 def log_event(session: Session, event_type: str, evidence_id: int | None = None, **details: Any) -> AuditEvent:
-    # ponytail: single-writer chain (fine for a local app); serialize writers
-    # before multi-user
-    last = session.exec(
-        select(AuditEvent).order_by(AuditEvent.id.desc()).limit(1)
-    ).first()
-    prev_hash = last.event_hash if last else ""
+    with _chain_lock:
+        last = session.exec(
+            select(AuditEvent).order_by(AuditEvent.id.desc()).limit(1)
+        ).first()
+        prev_hash = last.event_hash if last else ""
 
-    event = AuditEvent(
-        event_type=event_type,
-        evidence_id=evidence_id,
-        details_json=json.dumps(details, ensure_ascii=False, default=str),
-        prev_hash=prev_hash,
-    )
-    event.event_hash = _hash_event(prev_hash, event)
-    session.add(event)
-    session.commit()
+        event = AuditEvent(
+            event_type=event_type,
+            evidence_id=evidence_id,
+            details_json=json.dumps(details, ensure_ascii=False, default=str),
+            prev_hash=prev_hash,
+        )
+        event.event_hash = _hash_event(prev_hash, event)
+        session.add(event)
+        session.commit()
     session.refresh(event)
     return event
 

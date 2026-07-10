@@ -15,5 +15,9 @@ def require_api_key(x_api_key: str | None = Header(default=None)) -> None:
     expected = os.getenv("CASEMIND_API_KEY")
     if not expected:
         return
-    if not x_api_key or not secrets.compare_digest(x_api_key, expected):
+    # compare bytes: compare_digest raises TypeError on non-ASCII str,
+    # which would turn a bad key into a 500 instead of a 401
+    if not x_api_key or not secrets.compare_digest(
+        x_api_key.encode("utf-8"), expected.encode("utf-8")
+    ):
         raise HTTPException(status_code=401, detail="invalid or missing API key")
