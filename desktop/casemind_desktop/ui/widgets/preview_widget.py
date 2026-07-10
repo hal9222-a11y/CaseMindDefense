@@ -91,10 +91,11 @@ class PreviewWidget(QWidget):
         self._text_view.setPlainText(payload.get("text", ""))
         self._stack.setCurrentIndex(1)
         if self._highlight:
-            # scroll to and select the cited chunk (first ~60 chars is enough
-            # to locate it and keeps QTextEdit.find fast)
+            # scroll to and select the cited text; strip snippet ellipses and
+            # use the first ~60 chars - enough to locate, keeps find() fast
+            needle = self._highlight.strip(".").strip()[:60]
             self._text_view.moveCursor(QTextCursor.Start)
-            self._text_view.find(self._highlight[:60].strip())
+            self._text_view.find(needle)
             self._highlight = None
 
     def _show_image(self, item: dict[str, Any]) -> None:

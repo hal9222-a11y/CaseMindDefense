@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased (sprint 0.12.4 — Investigation Views)
+
+- Timeline, Entities, and Contradictions pages show live data (no
+  placeholders left except Settings); pages lazy-load on first open
+- Entities carry a type (name / hebrew_term / phone / israeli_id /
+  vehicle_plate); double-clicking an entity searches its occurrences
+- Timeline double-click opens the evidence with the snippet highlighted
+- Contradictions page marked experimental until the v0.13 engine
+
 ## Unreleased (sprint 0.12.2 — Search Workspace)
 
 - Search mode toggle: Semantic / Keyword in one search page

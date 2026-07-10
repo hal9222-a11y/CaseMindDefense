@@ -63,6 +63,32 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def timeline(self, limit: int = 500) -> list[dict[str, Any]]:
+        response = requests.get(
+            self._url(endpoints.TIMELINE),
+            params={"limit": limit},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def entities(self, limit: int = 500) -> list[dict[str, Any]]:
+        response = requests.get(
+            self._url(endpoints.ENTITIES),
+            params={"limit": limit},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def contradictions(self) -> list[dict[str, Any]]:
+        response = requests.get(
+            self._url(endpoints.CONTRADICTIONS),
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def ask_ai(self, question: str, limit: int = 5) -> dict[str, Any]:
         response = requests.post(
             self._url(endpoints.AI_ASK),

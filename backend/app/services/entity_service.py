@@ -22,38 +22,41 @@ HEBREW_STOPWORDS = {
 }
 
 
-def _add(counts: dict[str, int], entity: str) -> None:
+def _add(counts: dict[tuple[str, str], int], entity: str, entity_type: str) -> None:
     entity = (entity or "").strip()
 
     if not entity:
         return
 
-    counts[entity] = counts.get(entity, 0) + 1
+    key = (entity, entity_type)
+    counts[key] = counts.get(key, 0) + 1
 
 
 def list_entities(session: Session) -> list[dict]:
-    counts: dict[str, int] = {}
+    counts: dict[tuple[str, str], int] = {}
 
     for chunk in session.exec(select(EvidenceChunk)).all():
         text = chunk.text or ""
 
         for entity in LATIN_ENTITY_RE.findall(text):
-            _add(counts, entity)
+            _add(counts, entity, "name")
 
         for entity in HEBREW_TOKEN_RE.findall(text):
             if entity not in HEBREW_STOPWORDS:
-                _add(counts, entity)
+                _add(counts, entity, "hebrew_term")
 
         for phone in PHONE_RE.findall(text):
-            _add(counts, phone)
+            _add(counts, phone, "phone")
 
         for israeli_id in ISRAELI_ID_RE.findall(text):
-            _add(counts, israeli_id)
+            _add(counts, israeli_id, "israeli_id")
 
         for plate in VEHICLE_PLATE_RE.findall(text):
-            _add(counts, plate)
+            _add(counts, plate, "vehicle_plate")
 
     return [
-        {"entity": entity, "count": count}
-        for entity, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        {"entity": entity, "type": entity_type, "count": count}
+        for (entity, entity_type), count in sorted(
+            counts.items(), key=lambda item: (-item[1], item[0])
+        )
     ]
