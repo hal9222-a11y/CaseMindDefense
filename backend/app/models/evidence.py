@@ -39,6 +39,14 @@ class EvidenceChunk(SQLModel, table=True):
     embedding_version: str = "1"
 
 
+class ExtractedEntity(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    evidence_id: int = Field(foreign_key="evidence.id", index=True)
+    chunk_index: int = 0
+    text: str = Field(index=True)
+    label: str = Field(index=True)
+
+
 class AuditEvent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     event_type: str = Field(index=True)

@@ -2,6 +2,11 @@
 
 ## Unreleased (sprint 0.13 — AI Workspace)
 
+- Hebrew NER via DictaBERT: entities extracted at index time into an
+  `extractedentity` table (person / organization / location / time +
+  deterministic phone / ID / plate patterns), aggregated by `/entities`;
+  regex fallback when the model is unavailable; reindex replaces entities
+
 - Default embedding model switched to `intfloat/multilingual-e5-small`
   (Hebrew + English in one vector space; Hebrew queries now match
   English evidence and vice versa) with e5 `query:`/`passage:` prefixes

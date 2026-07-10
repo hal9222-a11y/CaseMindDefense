@@ -33,6 +33,28 @@ def _add(counts: dict[tuple[str, str], int], entity: str, entity_type: str) -> N
 
 
 def list_entities(session: Session) -> list[dict]:
+    """Aggregates entities extracted at index time (see ner_service).
+    Falls back to a legacy regex scan of chunks for evidence indexed
+    before entity extraction existed."""
+    from sqlalchemy import func
+
+    from app.models.evidence import ExtractedEntity
+
+    rows = session.exec(
+        select(ExtractedEntity.text, ExtractedEntity.label, func.count())
+        .group_by(ExtractedEntity.text, ExtractedEntity.label)
+    ).all()
+
+    if rows:
+        return [
+            {"entity": text, "type": label, "count": count}
+            for text, label, count in sorted(rows, key=lambda r: (-r[2], r[0]))
+        ]
+
+    return _legacy_regex_scan(session)
+
+
+def _legacy_regex_scan(session: Session) -> list[dict]:
     counts: dict[tuple[str, str], int] = {}
 
     for chunk in session.exec(select(EvidenceChunk)).all():

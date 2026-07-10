@@ -36,9 +36,20 @@ citation-only mode when no LLM is available.
 - Verified live after full reindex: Hebrew query matched English
   evidence at 0.86 cosine
 
-## Remaining in v0.13
+## Delivered (part 3 — Hebrew NER)
 
-- Hebrew NER (DictaBERT) replacing regex entities
+- `ner_service`: DictaBERT (`dicta-il/dictabert-ner`, env-overridable)
+  at index time; entities stored per chunk in `extractedentity`;
+  deterministic patterns (phone/ID/plate) always included; full regex
+  fallback when the model is missing (CI needs no model)
+- `/entities` aggregates the table (SQL GROUP BY) with a legacy scan
+  fallback for pre-NER data; reindex replaces an evidence's entities
+- Live on the real court document: the defendant and witnesses
+  identified as persons, Tel Aviv as location, times/phones/plates typed
+- Known quirks for later: subword-truncated names, prepositions glued
+  to locations (strip ב/ל prefixes)
+
+## Remaining in v0.13
 - Contradiction engine (semantic pairing + NLI/LLM verdict)
 - Entity graph view
 - Desktop: show answer mode/model in the AI page

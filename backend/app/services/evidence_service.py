@@ -3,10 +3,11 @@ import shutil
 from pathlib import Path
 from sqlmodel import Session, select
 from app.core.settings import get_settings
-from app.models.evidence import Evidence, EvidenceChunk
+from app.models.evidence import Evidence, EvidenceChunk, ExtractedEntity
 from app.services.audit_service import log_event
 from app.services.embedding_service import embed_text, embedding_model_name, serialize_embedding
 from app.services.hash_service import sha256_file
+from app.services.ner_service import extract_entities
 from app.services.text_service import TextExtractionError, chunk_text_with_offsets, extract_text
 
 class DuplicateEvidenceError(Exception):
@@ -62,6 +63,10 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
         select(EvidenceChunk).where(EvidenceChunk.evidence_id == evidence_id)
     ).all():
         session.delete(old_chunk)
+    for old_entity in session.exec(
+        select(ExtractedEntity).where(ExtractedEntity.evidence_id == evidence_id)
+    ).all():
+        session.delete(old_entity)
     session.commit()
 
     try:
@@ -90,6 +95,16 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
             embedding_dimension=len(vec),
         )
         session.add(ev_chunk)
+
+        for entity in extract_entities(chunk_text):
+            session.add(
+                ExtractedEntity(
+                    evidence_id=evidence.id,
+                    chunk_index=idx,
+                    text=entity["text"],
+                    label=entity["label"],
+                )
+            )
 
     if chunks:
         evidence.status = "ocr_indexed" if extraction_method == "ocr" else "indexed"
