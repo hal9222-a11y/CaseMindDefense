@@ -16,6 +16,15 @@ def test_clean_answer_normalizes_small_model_artifacts():
     assert "[5]" not in cleaned and "[12]" not in cleaned
 
 
+def test_clean_answer_splits_grouped_citations_and_drops_hallucinated():
+    # aya-style grouped markers with out-of-range indices
+    raw = "הנאשם מכחיש את כל האישומים [1,2,3,4]. פירוט נוסף [2,5,6]."
+    cleaned = _clean_answer(raw, 4)
+    assert "[1][2][3][4]" in cleaned
+    assert "[2]" in cleaned.split(".")[1]
+    assert "[5]" not in cleaned and "[6]" not in cleaned
+
+
 def _import_marked_doc(client, tmp_path, marker):
     p = tmp_path / f"stmt_{marker}.txt"
     p.write_text(f"The witness described a white vehicle. Marker {marker}.", encoding="utf-8")

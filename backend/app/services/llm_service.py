@@ -18,7 +18,10 @@ You will receive numbered evidence excerpts and a question.
 
 Hard rules:
 - Answer ONLY from the evidence excerpts. Never use outside knowledge.
-- Every sentence must end with its citation marker, e.g. [1] or [2][3].
+- CITATIONS ARE MANDATORY: every sentence or bullet MUST end with the
+  bracketed number of its source excerpt, like [1] or [2][3].
+  Example: "הנאשם מכחיש את האישום [2]." An answer without [n] markers
+  is invalid.
 - If the evidence does not answer the question, reply exactly: NOT_FOUND
 - Be concise and factual. No speculation."""
 
@@ -46,9 +49,12 @@ def synthesize_answer(question: str, citations: list[dict]) -> str | None:
     )
     # small models drift languages; be explicit, and last (recency wins)
     if HEBREW_RE.search(question):
-        language_rule = "ענה בעברית בלבד. אל תשתמש בשום שפה אחרת."
+        language_rule = "ענה בעברית בלבד. סיים כל משפט בסימון המקור שלו, למשל [1]."
     else:
-        language_rule = "Answer strictly in the language of the question."
+        language_rule = (
+            "Answer strictly in the language of the question. "
+            "End every sentence with its source marker, e.g. [1]."
+        )
 
     content = _chat([
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -123,14 +129,16 @@ def judge_contradiction(text_a: str, text_b: str) -> dict | None:
 
 
 def _clean_answer(answer: str, citation_count: int) -> str:
-    """Normalize small-model artifacts: [_1] -> [1], drop citation markers
-    that point past the provided excerpts (hallucinated indices)."""
+    """Normalize model artifacts: [_1] -> [1], grouped [1,2,3] -> [1][2][3],
+    and drop citation indices past the provided excerpts (hallucinated)."""
     answer = re.sub(r"\[_+(\d+)\]", r"[\1]", answer)
     # latin junk glued to a leading Hebrew word (e.g. "_theנאשם")
     answer = re.sub(r"^[_a-zA-Z]{1,8}(?=[֐-׿])", "", answer)
-    answer = re.sub(
-        r"\[(\d+)\]",
-        lambda m: m.group(0) if 1 <= int(m.group(1)) <= citation_count else "",
-        answer,
-    )
+
+    def _fix_group(match: re.Match) -> str:
+        numbers = [n.strip() for n in match.group(1).split(",")]
+        valid = [n for n in numbers if n.isdigit() and 1 <= int(n) <= citation_count]
+        return "".join(f"[{n}]" for n in valid)
+
+    answer = re.sub(r"\[(\d+(?:\s*,\s*\d+)*)\]", _fix_group, answer)
     return answer.strip()
