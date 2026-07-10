@@ -14,7 +14,8 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
 OCR_LANGS = "eng+heb"
 PDF_OCR_RENDER_SCALE = 2.0  # ~144 dpi; raise if OCR quality is poor on small print
-# ponytail: sync OCR in the request path; cap pages until background indexing lands
+# ponytail: OCR now runs in background indexing, but the page cap stays as a
+# resource guard (CPU-minutes per file); raise the env var for full books
 PDF_OCR_MAX_PAGES = int(os.getenv("CASEMIND_PDF_OCR_MAX_PAGES", "50"))
 
 

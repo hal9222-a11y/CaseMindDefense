@@ -46,6 +46,7 @@ class EvidencePage(QWidget):
         self.toolbar.refresh_clicked.connect(self._refresh)
         self.toolbar.import_clicked.connect(self._pick_and_import)
         self.toolbar.new_case_clicked.connect(self._create_case)
+        self.toolbar.report_clicked.connect(self._generate_report)
         self.toolbar.case_changed.connect(lambda _case_id: self._refresh())
 
         self._pending_highlight: str | None = None
@@ -94,6 +95,29 @@ class EvidencePage(QWidget):
             on_done=lambda _case: self._load_cases(),
             on_error=lambda err: QMessageBox.critical(self, "Create Case Failed", err),
         )
+
+    def _generate_report(self) -> None:
+        run_async(
+            self.api.generate_report,
+            self.toolbar.current_case_id(),
+            on_done=self._on_report_ready,
+            on_error=lambda err: QMessageBox.critical(self, "Report Failed", err),
+        )
+
+    def _on_report_ready(self, result: dict[str, Any]) -> None:
+        import os
+
+        QMessageBox.information(
+            self,
+            "Report Ready",
+            f"הדוח נוצר: {result.get('case_name')}\n"
+            f"{result.get('evidence_count')} ראיות · "
+            f"{result.get('timeline_events')} אירועי ציר זמן · "
+            f"{result.get('entities')} ישויות\n\nנפתח בדפדפן (Ctrl+P להדפסה כ-PDF).",
+        )
+        path = result.get("path")
+        if path:
+            os.startfile(path)  # noqa: S606 (local file, user-initiated)
 
     def _refresh(self) -> None:
         self.toolbar.set_busy(True)
