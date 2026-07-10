@@ -29,6 +29,13 @@ class ApiWorker(QRunnable):
             self.signals.failed.emit(str(exc))
 
 
+# keep in-flight workers referenced: without this, Python may garbage-collect
+# the worker (and its WorkerSignals QObject) after the pool's autoDelete,
+# dropping the queued finished/failed delivery - the UI then never gets the
+# result and anything disabled while "busy" stays disabled forever
+_in_flight: set[ApiWorker] = set()
+
+
 def run_async(
     fn: Callable[..., Any],
     *args: Any,
@@ -38,8 +45,17 @@ def run_async(
 ) -> None:
     """Run a blocking call on the global thread pool; callbacks fire on the UI thread."""
     worker = ApiWorker(fn, *args, **kwargs)
+    worker.setAutoDelete(False)
+    _in_flight.add(worker)
+
     if on_done is not None:
         worker.signals.finished.connect(on_done)
     if on_error is not None:
         worker.signals.failed.connect(on_error)
+
+    def _release(*_args: Any) -> None:
+        _in_flight.discard(worker)
+
+    worker.signals.finished.connect(_release)
+    worker.signals.failed.connect(_release)
     QThreadPool.globalInstance().start(worker)
