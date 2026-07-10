@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Audio/video evidence is transcribed locally (faster-whisper) in the
+  background: wiretaps and interrogation videos become searchable with
+  time-range citations (`time:MM:SS-MM:SS`); statuses `transcribed` /
+  `transcription_unavailable`. Hebrew-tuned model (ivrit.ai) recommended
+  via `CASEMIND_WHISPER_MODEL`
+- Russian support: OCR language packs auto-detected (app-managed
+  tessdata with heb+rus), Cyrillic entity extraction, cross-lingual
+  search verified (Hebrew query -> Russian scanned document)
+
 ## v0.15.0 — 2026-07-10 · Security & Install Path
 
 - Desktop auto-starts the backend on launch (no more manual uvicorn)

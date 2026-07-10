@@ -23,10 +23,10 @@ jobs:
       - name: Install Tesseract (eng + heb)
         run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-heb
 
-      # sentence-transformers pulls torch (~GBs); the deterministic hash
-      # fallback covers the embedding path in tests
+      # sentence-transformers pulls torch (~GBs) and faster-whisper pulls
+      # ctranslate2; tests cover both via fallbacks/monkeypatching
       - name: Install dependencies (without heavy ML stack)
-        run: grep -viE '^sentence-transformers' requirements.txt | pip install -r /dev/stdin
+        run: grep -viE '^(sentence-transformers|faster-whisper)' requirements.txt | pip install -r /dev/stdin
 
       - name: Run tests
         run: python -m pytest -q

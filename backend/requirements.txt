@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 sqlmodel
 pypdfium2
+faster-whisper
 python-bidi
 pillow
 fpdf2  # tests: generate Hebrew text-layer PDF fixtures

@@ -9,6 +9,7 @@ from app.services.audit_service import log_event
 from app.services.embedding_service import embed_text, embedding_model_name, serialize_embedding
 from app.services.hash_service import sha256_file
 from app.services.ner_service import extract_entities
+from app.services.transcription_service import MEDIA_EXTENSIONS, transcribe_to_chunks
 from app.services.text_service import TextExtractionError, chunk_text_with_offsets, extract_text
 
 class DuplicateEvidenceError(Exception):
@@ -34,7 +35,12 @@ def _check_import_allowed(path: Path) -> None:
             return
     raise ImportPathNotAllowedError(f"import path outside allowed roots: {path}")
 
-SUPPORTED_EXTENSIONS = {".txt", ".pdf", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif", ".webp", ".docx", ".xlsx", ".pptx", ".eml", ".msg", ".wav", ".mp3", ".mp4"}
+SUPPORTED_EXTENSIONS = {
+    ".txt", ".pdf",
+    ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif", ".webp",
+    ".docx", ".xlsx", ".pptx", ".eml", ".msg",
+    *MEDIA_EXTENSIONS,
+}
 
 def register_evidence(session: Session, source_path: str, case_id: int | None = None) -> Evidence:
     """Fast synchronous part of import: hash, dedupe, copy into the store,
@@ -89,17 +95,30 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
         session.delete(old_entity)
     session.commit()
 
-    try:
-        text, extraction_method = extract_text(Path(evidence.stored_path))
-    except TextExtractionError as exc:
-        evidence.status = "text_extraction_failed"
-        session.add(evidence)
-        session.commit()
-        session.refresh(evidence)
-        log_event(session, "text_extraction_failed", evidence_id=evidence.id, error=str(exc))
-        return evidence
+    stored = Path(evidence.stored_path)
 
-    chunks = chunk_text_with_offsets(text)
+    if stored.suffix.lower() in MEDIA_EXTENSIONS:
+        media_chunks = transcribe_to_chunks(stored)
+        if media_chunks is None:
+            evidence.status = "transcription_unavailable"
+            session.add(evidence)
+            session.commit()
+            session.refresh(evidence)
+            log_event(session, "transcription_unavailable", evidence_id=evidence.id)
+            return evidence
+        chunks = media_chunks
+        extraction_method = "transcription"
+    else:
+        try:
+            text, extraction_method = extract_text(stored)
+        except TextExtractionError as exc:
+            evidence.status = "text_extraction_failed"
+            session.add(evidence)
+            session.commit()
+            session.refresh(evidence)
+            log_event(session, "text_extraction_failed", evidence_id=evidence.id, error=str(exc))
+            return evidence
+        chunks = chunk_text_with_offsets(text)
     for idx, chunk_data in enumerate(chunks):
         chunk_text = chunk_data.get("text") or ""
         if not chunk_text.strip():
@@ -127,7 +146,10 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
             )
 
     if chunks:
-        evidence.status = "ocr_indexed" if extraction_method == "ocr" else "indexed"
+        evidence.status = {
+            "ocr": "ocr_indexed",
+            "transcription": "transcribed",
+        }.get(extraction_method, "indexed")
     elif extraction_method == "unsupported":
         evidence.status = "extraction_not_supported"
     else:
