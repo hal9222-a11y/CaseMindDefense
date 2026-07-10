@@ -57,6 +57,19 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def import_evidence_folder(self, folder_path: str, case_id: int | None = None) -> dict[str, Any]:
+        body: dict[str, Any] = {"path": folder_path}
+        if case_id is not None:
+            body["case_id"] = case_id
+        # registering a large folder (hashing every file) can take a while
+        response = self._session.post(
+            self._url(endpoints.EVIDENCE_IMPORT_FOLDER),
+            json=body,
+            timeout=600,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def list_cases(self) -> list[dict[str, Any]]:
         response = self._session.get(self._url(endpoints.CASES), timeout=REQUEST_TIMEOUT)
         response.raise_for_status()

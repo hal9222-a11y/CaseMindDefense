@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 class ToolbarWidget(QWidget):
     refresh_clicked = Signal()
     import_clicked = Signal()
+    import_folder_clicked = Signal()
     new_case_clicked = Signal()
     report_clicked = Signal()
     case_changed = Signal(object)  # int case id, or None for "All Cases"
@@ -26,7 +27,8 @@ class ToolbarWidget(QWidget):
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         self.refresh_button = QPushButton("Refresh")
-        self.import_button = QPushButton("Import Evidence")
+        self.import_button = QPushButton("Import File")
+        self.import_folder_button = QPushButton("Import Folder")
         self.new_case_button = QPushButton("New Case")
         self.report_button = QPushButton("Report")
         self.case_selector = QComboBox()
@@ -34,6 +36,7 @@ class ToolbarWidget(QWidget):
 
         self.refresh_button.clicked.connect(self.refresh_clicked)
         self.import_button.clicked.connect(self.import_clicked)
+        self.import_folder_button.clicked.connect(self.import_folder_clicked)
         self.new_case_button.clicked.connect(self.new_case_clicked)
         self.report_button.clicked.connect(self.report_clicked)
         self.case_selector.currentIndexChanged.connect(self._on_case_changed)
@@ -46,6 +49,7 @@ class ToolbarWidget(QWidget):
         layout.addSpacing(16)
         layout.addWidget(self.refresh_button)
         layout.addWidget(self.import_button)
+        layout.addWidget(self.import_folder_button)
         layout.addWidget(self.report_button)
         layout.addStretch()
         self.setLayout(layout)
@@ -70,3 +74,4 @@ class ToolbarWidget(QWidget):
     def set_busy(self, busy: bool) -> None:
         self.refresh_button.setEnabled(not busy)
         self.import_button.setEnabled(not busy)
+        self.import_folder_button.setEnabled(not busy)
