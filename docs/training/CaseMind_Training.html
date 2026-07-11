@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+<meta charset="utf-8">
+<title>CaseMind Defense — חוברת הדרכה</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Segoe UI", Arial, sans-serif; color: #1a2233; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .page { width: 210mm; min-height: 296mm; padding: 13mm 15mm 18mm; page-break-after: always; position: relative; background: #fff; }
+  .page:last-child { page-break-after: auto; }
+
+  h1 { font-size: 32px; font-weight: 800; }
+  h2 { font-size: 20px; color: #1d4ed8; margin: 0 0 4mm; border-right: 4px solid #2563eb; padding-right: 4mm; }
+  h3 { font-size: 14.5px; color: #0f172a; margin: 5mm 0 2mm; }
+  p  { font-size: 12px; line-height: 1.6; margin-bottom: 2mm; }
+  .lead { font-size: 12.5px; color: #475569; line-height: 1.7; }
+  b, strong { color: #0f172a; }
+  .muted { color: #64748b; }
+
+  /* cover */
+  .cover { background: linear-gradient(160deg, #0b1220 0%, #111827 55%, #1e3a8a 130%); color: #f9fafb; display: flex; flex-direction: column; }
+  .cover .kicker { margin-top: 30mm; font-size: 15px; color: #93c5fd; letter-spacing: 3px; }
+  .cover .brand { font-size: 44px; font-weight: 900; margin-top: 3mm; }
+  .cover .brand span { color: #60a5fa; }
+  .cover .title { font-size: 26px; font-weight: 700; color: #e2e8f0; margin-top: 10mm; }
+  .cover .desc { font-size: 13px; color: #9ca3af; margin-top: 5mm; max-width: 150mm; line-height: 1.8; }
+  .toc { margin-top: 14mm; background: rgba(255,255,255,.05); border: 1px solid rgba(96,165,250,.3); border-radius: 10px; padding: 7mm; }
+  .toc h4 { color: #93c5fd; font-size: 13px; margin-bottom: 3mm; }
+  .toc ol { list-style: none; }
+  .toc li { font-size: 12px; color: #cbd5e1; padding: 1.3mm 0; display: flex; justify-content: space-between; border-bottom: 1px dashed rgba(148,163,184,.2); }
+  .toc li span { color: #64748b; }
+
+  /* callouts */
+  .box { border-radius: 8px; padding: 4mm 5mm; margin: 3mm 0; font-size: 11.5px; line-height: 1.6; }
+  .example { background: #eff6ff; border: 1px solid #bfdbfe; }
+  .example .t { color: #1d4ed8; font-weight: 700; font-size: 11px; margin-bottom: 1.5mm; }
+  .tip { background: #f0fdf4; border: 1px solid #bbf7d0; }
+  .tip .t { color: #15803d; font-weight: 700; font-size: 11px; margin-bottom: 1.5mm; }
+  .warn { background: #fffbeb; border: 1px solid #fde68a; }
+  .warn .t { color: #b45309; font-weight: 700; font-size: 11px; margin-bottom: 1.5mm; }
+  .see { background: #f1f5f9; border-right: 3px solid #64748b; padding: 2.5mm 4mm; font-size: 11px; color: #334155; margin: 2mm 0; border-radius: 0 6px 6px 0; }
+  .see b { color: #0f172a; }
+
+  /* numbered steps */
+  ol.steps { list-style: none; counter-reset: s; margin: 2mm 0; }
+  ol.steps > li { counter-increment: s; position: relative; padding: 1.5mm 11mm 2.5mm 0; font-size: 12px; line-height: 1.6; }
+  ol.steps > li::before { content: counter(s); position: absolute; right: 0; top: 1mm; width: 7mm; height: 7mm; background: #2563eb; color: #fff; border-radius: 50%; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+
+  ul.dot { padding-right: 5mm; }
+  ul.dot li { font-size: 11.5px; line-height: 1.7; }
+
+  /* app mockup */
+  .shot { background: #0b1220; border-radius: 9px; overflow: hidden; border: 1px solid #24304a; margin: 3mm 0; }
+  .chrome { background: #1f2937; padding: 2mm 4mm; display: flex; align-items: center; gap: 2mm; }
+  .dot3 { width: 2.6mm; height: 2.6mm; border-radius: 50%; }
+  .chrome .t { color: #9ca3af; font-size: 9.5px; margin-right: 3mm; }
+  .app { display: flex; }
+  .side { width: 27mm; background: #1f2937; padding: 2mm 0; font-size: 9px; color: #cbd5e1; }
+  .side div { padding: 1.5mm 3mm; }
+  .side .on { background: #2563eb; color: #fff; }
+  .main { flex: 1; padding: 3mm; color: #e5e7eb; font-size: 10px; }
+  .btn { display: inline-block; background: #2563eb; color: #fff; font-size: 9px; padding: 1.2mm 2.6mm; border-radius: 4px; margin-left: 1.2mm; }
+  .btn.g { background: #374151; } .btn.r { background: #b91c1c; }
+  table.ui { width: 100%; border-collapse: collapse; font-size: 9px; margin-top: 2mm; color: #e5e7eb; }
+  table.ui th { background: #1f2937; color: #93c5fd; text-align: right; padding: 1.3mm 1.8mm; border: 1px solid #2b3650; }
+  table.ui td { padding: 1.2mm 1.8mm; border: 1px solid #222c44; }
+  tr.sel td { background: #1d3461; }
+  .pill { display: inline-block; font-size: 8px; padding: .4mm 1.8mm; border-radius: 7px; }
+  .ok { background: #064e3b; color: #6ee7b7; } .pr { background: #4a3a09; color: #fbbf24; } .md { background: #3b0764; color: #d8b4fe; }
+  .panel { background: #111a2e; border: 1px solid #24304a; border-radius: 5px; padding: 2.5mm; margin-top: 2mm; font-size: 9.5px; color: #d1d5db; line-height: 1.6; }
+  .cite { color: #60a5fa; font-weight: 700; }
+  .hl { background: #a16207; color: #fff; padding: 0 1mm; border-radius: 2px; }
+
+  /* reference tables */
+  table.ref { width: 100%; border-collapse: collapse; font-size: 11px; margin: 2mm 0; }
+  table.ref th { background: #eef2ff; color: #1e3a8a; text-align: right; padding: 2mm 3mm; border: 1px solid #c7d2fe; }
+  table.ref td { padding: 1.8mm 3mm; border: 1px solid #e2e8f0; vertical-align: top; }
+  table.ref code { background: #f1f5f9; padding: .3mm 1.5mm; border-radius: 3px; font-size: 10px; }
+  .st { display: inline-block; font-size: 10px; padding: .4mm 2mm; border-radius: 8px; font-weight: 600; }
+  .st-g { background: #dcfce7; color: #15803d; } .st-y { background: #fef9c3; color: #a16207; } .st-r { background: #fee2e2; color: #b91c1c; }
+
+  .foot { position: absolute; bottom: 8mm; right: 15mm; left: 15mm; display: flex; justify-content: space-between; font-size: 9px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 2mm; }
+  .chapnum { color: #2563eb; font-weight: 800; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<!-- ===== COVER ===== -->
+<div class="page cover">
+  <div class="kicker">חוברת הדרכה</div>
+  <div class="brand">CaseMind <span>Defense</span></div>
+  <div class="title">מדריך שימוש מלא — צעד אחר צעד</div>
+  <div class="desc">
+    חוברת זו מלמדת אותך להשתמש במערכת מאפס: ניהול תיקים, ייבוא ראיות
+    מכל סוג, חיפוש חכם, שאילת שאלות ל-AI, בניית תמונת חקירה, הפקת דוחות
+    ותחזוקה. כל פרק כולל הסבר, צעדים מדויקים ודוגמאות אמיתיות.
+  </div>
+  <div class="toc">
+    <h4>תוכן העניינים</h4>
+    <ol>
+      <li><span>מבוא</span> מפת המסך ואיך המערכת חושבת <span>עמ' 2</span></li>
+      <li><span>התחלה מהירה</span> התיק הראשון שלך ב-10 דקות <span>עמ' 3</span></li>
+      <li><span>פרק 1</span> תיקים וייבוא ראיות <span>עמ' 4</span></li>
+      <li><span>פרק 2</span> חיפוש — סמנטי ומילולי <span>עמ' 5</span></li>
+      <li><span>פרק 3</span> עוזר ה-AI ושאלות טובות <span>עמ' 6</span></li>
+      <li><span>פרק 4</span> תמונת החקירה <span>עמ' 7</span></li>
+      <li><span>פרק 5</span> הקלטות ווידאו <span>עמ' 8</span></li>
+      <li><span>פרק 6-7</span> דוחות, אבטחה ותחזוקה <span>עמ' 9</span></li>
+      <li><span>נספחים</span> טיפים, שאלות נפוצות, טבלת סטטוסים <span>עמ' 10-11</span></li>
+    </ol>
+  </div>
+</div>
+
+<!-- ===== INTRO ===== -->
+<div class="page">
+  <h2>מבוא — מפת המסך ואיך המערכת חושבת</h2>
+  <p class="lead">כל היכולות מסודרות בתפריט הצד (מימין). זהו סדר העבודה הטבעי:
+    מכניסים ראיות ⟵ מוצאים ⟵ שואלים ⟵ מבינים את התמונה ⟵ מפיקים דוח.</p>
+
+  <div class="shot">
+    <div class="chrome"><span class="dot3" style="background:#ef4444"></span><span class="dot3" style="background:#f59e0b"></span><span class="dot3" style="background:#22c55e"></span><span class="t">CaseMind Defense</span></div>
+    <div class="app">
+      <div class="side">
+        <div>Dashboard</div><div class="on">Evidence</div><div>Search</div><div>AI Workspace</div><div>Timeline</div><div>Entities</div><div>Contradictions</div><div>Entity Graph</div><div>Settings</div>
+      </div>
+      <div class="main" style="padding:5mm">
+        <p style="color:#93c5fd; font-size:11px; margin:0">כל דף = שלב בעבודת החקירה. הכול מקומי — שום מידע לא יוצא מהמחשב.</p>
+      </div>
+    </div>
+  </div>
+
+  <table class="ref">
+    <tr><th style="width:34mm">דף</th><th>למה הוא משמש</th></tr>
+    <tr><td><b>Dashboard</b></td><td>מסך פתיחה ובדיקת חיבור לשרת</td></tr>
+    <tr><td><b>Evidence</b></td><td>לב המערכת: ייבוא, צפייה, מחיקה והפקת דוח. כאן מתחילים</td></tr>
+    <tr><td><b>Search</b></td><td>חיפוש בכל התיק — לפי משמעות או לפי ביטוי מדויק</td></tr>
+    <tr><td><b>AI Workspace</b></td><td>שאלות חופשיות על התיק; תשובה עם ציטוטים למקור</td></tr>
+    <tr><td><b>Timeline</b></td><td>כל התאריכים מכל הראיות, ממוינים כרונולוגית</td></tr>
+    <tr><td><b>Entities</b></td><td>אנשים, מקומות, טלפונים, ת"ז ולוחיות שזוהו אוטומטית</td></tr>
+    <tr><td><b>Contradictions</b></td><td>זוגות עדויות/ראיות שהמערכת מסמנת כסותרות</td></tr>
+    <tr><td><b>Entity Graph</b></td><td>גרף קשרים חזותי — מי מקושר למי דרך אילו ראיות</td></tr>
+    <tr><td><b>Settings</b></td><td>בדיקת שלמות ראיות, גיבוי ומצב חיבור</td></tr>
+  </table>
+
+  <div class="box tip"><div class="t">💡 עקרון היסוד</div>
+    כל תשובה שהמערכת נותנת מלווה ב<b>ציטוט למקור</b> — מיקום מדויק במסמך
+    (<code>chars:2140-3320</code>) או דקה בהקלטה (<code>time:14:32-15:10</code>).
+    אין ראיה — אין תשובה. אתה תמיד יכול לאמת בעצמך.</div>
+
+  <div class="foot"><span>CaseMind Defense — חוברת הדרכה</span><span>עמוד 2</span></div>
+</div>
+
+<!-- ===== QUICK START ===== -->
+<div class="page">
+  <h2><span class="chapnum">התחלה מהירה</span> — התיק הראשון שלך ב-10 דקות</h2>
+  <p class="lead">חמישה צעדים מקצה לקצה. אחריהם כבר תשלוט בזרימה המרכזית.</p>
+
+  <ol class="steps">
+    <li><b>הפעל את האפליקציה.</b> דאבל-קליק על אייקון "CaseMind Defense" בשולחן העבודה. השרת עולה לבד — אין צורך להריץ שום דבר ידנית.</li>
+    <li><b>צור תיק.</b> בדף <b>Evidence</b>, לחץ <span class="btn g">New Case</span>, הקלד שם (למשל "מ״י נ׳ ישראלי 1234/26") ובחר אותו ברשימת ה-Case.</li>
+    <li><b>ייבא ראיות.</b> לחץ <span class="btn">Import Folder</span> ובחר את תיקיית התיק. כל הקבצים — כולל תתי-תיקיות — ייקלטו לתיק שבחרת.</li>
+    <li><b>המתן לעיבוד.</b> הקבצים מופיעים מיד בסטטוס <span class="pill pr">processing</span>. העיבוד (OCR / תמלול / אינדוקס) רץ ברקע. לחץ <span class="btn g">Refresh</span> כדי לראות אותם עוברים ל-<span class="pill ok">indexed</span>.</li>
+    <li><b>שאל שאלה.</b> עבור ל-<b>AI Workspace</b>, הקלד שאלה בעברית ("מה טוען הנאשם?") ולחץ <span class="btn">Ask</span>. קבל תשובה עם ציטוטים.</li>
+  </ol>
+
+  <div class="box warn"><div class="t">⚠️ תיק גדול של סריקות או הקלטות?</div>
+    העיבוד יכול לקחת זמן (OCR ותמלול איטיים מטבעם). זה רץ <b>ברקע</b> —
+    אתה יכול להתחיל לעבוד על מה שכבר מוכן. שעה של האזנות ≈ כשעה וחצי עיבוד;
+    אפשר לייבא ולחזור מאוחר יותר.</div>
+
+  <div class="box tip"><div class="t">💡 מתי להשתמש בכל כפתור ייבוא</div>
+    <b>Import File</b> — קובץ בודד שהגיע עכשיו.
+    <b>Import Folder</b> — תיקיית תיק שלמה בבת אחת (מומלץ להתחלה).</div>
+
+  <div class="foot"><span>CaseMind Defense — חוברת הדרכה</span><span>עמוד 3</span></div>
+</div>
+
+<!-- ===== CHAPTER 1: EVIDENCE ===== -->
+<div class="page">
+  <h2><span class="chapnum">פרק 1</span> — תיקים וייבוא ראיות</h2>
+
+  <div class="shot">
+    <div class="chrome"><span class="dot3" style="background:#ef4444"></span><span class="dot3" style="background:#f59e0b"></span><span class="dot3" style="background:#22c55e"></span><span class="t">Evidence</span></div>
+    <div class="app"><div class="main">
+      <div style="margin-bottom:2mm">Case: <b style="color:#93c5fd">מ״י נ׳ ישראלי 1234/26</b>
+        <span class="btn g">New Case</span><span class="btn g">Refresh</span><span class="btn">Import File</span><span class="btn">Import Folder</span><span class="btn r">Delete</span><span class="btn">Report</span></div>
+      <table class="ui">
+        <tr><th>ID</th><th>שם קובץ</th><th>סוג</th><th>סטטוס</th></tr>
+        <tr><td>12</td><td>כתב אישום.pdf</td><td>pdf</td><td><span class="pill ok">indexed</span></td></tr>
+        <tr class="sel"><td>13</td><td>הודעת עד — כהן (סרוק).pdf</td><td>pdf</td><td><span class="pill ok">ocr_indexed</span></td></tr>
+        <tr><td>14</td><td>האזנה 17.3.mp3</td><td>mp3</td><td><span class="pill md">transcribed</span></td></tr>
+        <tr><td>15</td><td>חקירה מצולמת.mp4</td><td>mp4</td><td><span class="pill pr">processing…</span></td></tr>
+      </table>
+    </div></div>
+  </div>
+
+  <h3>ניהול תיקים</h3>
+  <ul class="dot">
+    <li><b>New Case</b> יוצר תיק חדש. בחירת תיק ברשימה מסננת את הטבלה לאותו תיק בלבד.</li>
+    <li><b>All Cases</b> מציג את כל הראיות מכל התיקים יחד.</li>
+    <li>ייבוא מתבצע <b>לתיק שנבחר כרגע</b> — ודא שהתיק הנכון פעיל לפני ייבוא.</li>
+  </ul>
+
+  <h3>מה קורה בזמן קליטה</h3>
+  <p>המערכת מחשבת חתימת <b>SHA256</b> לכל קובץ (שרשרת משמורת), מזהה כפילויות,
+  ומריצה ברקע: חילוץ טקסט / OCR לסריקות / תמלול להקלטות / אינדוקס סמנטי / זיהוי ישויות.</p>
+
+  <div class="box example"><div class="t">דוגמה — ייבוא כפול</div>
+    ניסית לייבא קובץ שכבר קיים? המערכת תעצור עם הודעה: "הקובץ הזה כבר קיים
+    במערכת (ראיה מספר 12)". זה תקין — זיהוי הכפילויות מונע רישום כפול של
+    אותה ראיה, גם אם שם הקובץ שונה.</div>
+
+  <h3>מחיקת ראיה שהועלתה בטעות</h3>
+  <ol class="steps">
+    <li>בחר את שורת הראיה בטבלה. כפתור <span class="btn r">Delete</span> האדום נדלק.</li>
+    <li>לחץ עליו. יופיע דיאלוג אישור המפרט שהפעולה אינה הפיכה.</li>
+    <li>אשר "כן" — הקובץ, האינדוקס והישויות יימחקו, והמחיקה תירשם ביומן הפעולות.</li>
+  </ol>
+
+  <div class="foot"><span>CaseMind Defense — חוברת הדרכה</span><span>עמוד 4</span></div>
+</div>
+
+<!-- ===== CHAPTER 2: SEARCH ===== -->
+<div class="page">
+  <h2><span class="chapnum">פרק 2</span> — חיפוש: סמנטי ומילולי</h2>
+  <p class="lead">שני מצבי חיפוש, לכל אחד תפקיד. הכפתור מחליף ביניהם.</p>
+
+  <table class="ref">
+    <tr><th style="width:30mm">מצב</th><th>מתי להשתמש</th><th>דוגמה</th></tr>
+    <tr><td><b>Semantic</b><br>(לפי משמעות)</td><td>כשאתה לא יודע את המילים המדויקות, או רוצה למצוא רעיון גם בשפה אחרת</td><td>"העברת כספים חשודה" — ימצא גם "הועבר סכום במזומן"</td></tr>
+    <tr><td><b>Keyword</b><br>(ביטוי מדויק)</td><td>כשאתה מחפש שם, מספר או ביטוי מדויק</td><td>"אמיר גורי", "052-1234567"</td></tr>
+  </table>
+
+  <div class="shot">
+    <div class="chrome"><span class="dot3" style="background:#ef4444"></span><span class="dot3" style="background:#f59e0b"></span><span class="dot3" style="background:#22c55e"></span><span class="t">Search</span></div>
+    <div class="app"><div class="main">
+      <div style="margin-bottom:2mm"><span style="background:#0e1830;border:1px solid #2b3650;border-radius:4px;padding:1.5mm 3mm;color:#e5e7eb">העד ראה רכב ליד הבית</span> <span class="btn g">Semantic ▾</span> <span class="btn">Search</span></div>
+      <table class="ui">
+        <tr><th>קובץ</th><th>התאמה</th><th>מיקום</th><th>קטע</th></tr>
+        <tr><td>הודעת עד — כהן.pdf</td><td>0.87</td><td>chars:2140-3320</td><td>…הבחין <span class="hl">ברכב לבן חונה</span> סמוך לכניסה…</td></tr>
+        <tr><td>Протокол.pdf 🇷🇺</td><td>0.84</td><td>chars:410-1600</td><td>…видел <span class="hl">белый автомобиль</span>…</td></tr>
+        <tr><td>האזנה 17.3.mp3 🎧</td><td>0.81</td><td>time:14:32-15:10</td><td>…"ליד הבית, עם הרכב הלבן"…</td></tr>
+      </table>
+    </div></div>
+  </div>
+
+  <div class="box example"><div class="t">דוגמה — חיפוש חוצה-שפות</div>
+    שאילתה אחת בעברית — "העד ראה רכב ליד הבית" — החזירה תוצאות ממסמך עברי,
+    מ<b>פרוטוקול חקירה ברוסית</b> ומ<b>הקלטת טלפון</b>. אינך צריך לחפש בכל
+    שפה בנפרד.</div>
+
+  <div class="box tip"><div class="t">💡 מעבר מהיר לראיה</div>
+    <b>דאבל-קליק</b> על תוצאה מעביר אותך לדף Evidence, בוחר את הראיה,
+    ומדגיש את הקטע המצוטט בתצוגה. כך אתה קופץ ישר להקשר המלא.</div>
+
+  <div class="foot"><span>CaseMind Defense — חוברת הדרכה</span><span>עמוד 5</span></div>
+</div>
+
+<!-- ===== CHAPTER 3: AI ===== -->
+<div class="page">
+  <h2><span class="chapnum">פרק 3</span> — עוזר ה-AI ושאלות טובות</h2>
+  <p class="lead">שאל בעברית חופשית. התשובה מבוססת אך ורק על הראיות בתיק, עם ציטוטים
+    שאפשר ללחוץ עליהם. אין ראיה — התשובה תהיה "לא נמצא", לעולם לא המצאה.</p>
+
+  <div class="shot">
+    <div class="chrome"><span class="dot3" style="background:#ef4444"></span><span class="dot3" style="background:#f59e0b"></span><span class="dot3" style="background:#22c55e"></span><span class="t">AI Workspace · 🤖 answered by aya-expanse:8b (מקומי)</span></div>
+    <div class="app"><div class="main">
+      <div style="background:#0e1830;border:1px solid #2b3650;border-radius:4px;padding:1.8mm 3mm;color:#e5e7eb;margin-bottom:2mm">מה טוען החשוד לגבי האישומים נגדו?</div>
+      <div class="panel">
+        החשוד מכחיש את כל האישומים <span class="cite">[1][2]</span>. עיקרי גרסתו:<br>
+        • לא נכח בזירה במועד האירוע <span class="cite">[1]</span>.<br>
+        • הרכב הלבן אינו שלו; נמכר חודשיים קודם <span class="cite">[2][3]</span>.<br>
+        • בשיחה מ-17.3 עולה תיאום "ליד הבית עם הרכב הלבן" <span class="cite">[4]</span> — בסתירה לגרסתו.
+      </div>
+      <table class="ui" style="margin-top:1.5mm">
+        <tr><th>#</th><th>מקור</th><th>מיקום</th></tr>
+        <tr><td>[1]</td><td>הודעת חשוד.pdf</td><td>chars:180-1250</td></tr>
+        <tr><td>[4]</td><td>האזנה 17.3.mp3 🎧</td><td>time:14:32-15:10</td></tr>
+      </table>
+    </div></div>
+  </div>
+
+  <h3>איך לשאול שאלות טובות</h3>
+  <ul class="dot">
+    <li><b>שאלה ממוקדת</b> עדיפה על כללית. "אילו עדים ראו את הרכב?" טוב מ-"ספר לי על התיק".</li>
+    <li><b>בקש רשימות והצלבות:</b> "מה הסתירות בין עדות כהן לעדות לוי?", "מי הזכיר את דוד?".</li>
+    <li><b>אמת תמיד</b> — דאבל-קליק על ציטוט <span class="cite">[n]</span> פותח את המקור המדויק.</li>
+  </ul>
+
+  <div class="box example"><div class="t">דוגמאות לשאלות שעובדות טוב</div>
+    "מה טוען הנאשם לגבי כל אחד מסעיפי האישום?" · "אילו ראיות קושרות את
+    החשוד לזירה?" · "מתי מוזכר כסף שהועבר, ובאילו סכומים?" ·
+    "האם יש עדות הסותרת את גרסת הנאשם?"</div>
+
+  <div class="box warn"><div class="t">⚠️ מצב "ציטוטים בלבד"</div>
+    אם Ollama (מנוע ה-AI המקומי) אינו פעיל, המערכת עוברת אוטומטית למצב
+    שמציג את הקטעים הרלוונטיים <b>ללא ניסוח תשובה</b>. הכותרת תציין זאת.
+    להפעלה: הרץ <code>ollama serve</code>.</div>
+
+  <div class="foot"><span>CaseMind Defense — חוברת הדרכה</span><span>עמוד 6</span></div>
+</div>
+
+<!-- ===== CHAPTER 4: INVESTIGATION PICTURE ===== -->
+<div class="page">
+  <h2><span class="chapnum">פרק 4</span> — תמונת החקירה</h2>
+  <p class="lead">ארבעה כלים שנבנים אוטומטית מהראיות, ומחברים אותן לתמונה אחת.</p>
+
+  <div style="display:flex; gap:5mm">
+    <div style="flex:1">
+      <h3>📅 Timeline — ציר זמן</h3>
+      <p>כל תאריך שנמצא בכל ראיה, ממוין כרונולוגית. דאבל-קליק על שורה קופץ למקור.</p>
+      <div class="box example" style="margin-top:1mm"><div class="t">שימוש</div>לבנות רצף אירועים: "מה קרה בין 15 ל-18 במרץ?" נהיה מיידי.</div>
+
+      <h3>👤 Entities — ישויות</h3>
+      <p>אנשים, מקומות, טלפונים, ת"ז ולוחיות רישוי שזוהו אוטומטית (עברית, רוסית ואנגלית), עם מספר האזכורים. דאבל-קליק מחפש את כל המופעים.</p>
+    </div>
+    <div style="flex:1">
+      <h3>🕸️ Entity Graph — גרף קשרים</h3>
+      <div class="shot" style="padding:2mm; background:#0b1220">
+        <svg viewBox="0 0 280 150" style="width:100%">
+          <line x1="140" y1="75" x2="55"  y2="35"  stroke="#4b5563" stroke-width="2.5"/>
+          <line x1="140" y1="75" x2="225" y2="35"  stroke="#4b5563" stroke-width="1.5"/>
+          <line x1="140" y1="75" x2="60"  y2="120" stroke="#4b5563" stroke-width="2"/>
+          <line x1="140" y1="75" x2="220" y2="120" stroke="#4b5563" stroke-width="1.5"/>
+          <circle cx="140" cy="75"  r="15" fill="#3B82F6"/>
+          <circle cx="55"  cy="35"  r="11" fill="#3B82F6"/>
+          <circle cx="225" cy="35"  r="10" fill="#22C55E"/>
+          <circle cx="60"  cy="120" r="10" fill="#F59E0B"/>
+          <circle cx="220" cy="120" r="10" fill="#EC4899"/>
+          <text x="140" y="98" fill="#e5e7eb" font-size="8" text-anchor="middle">ישראל ישראלי</text>
+          <text x="55"  y="22" fill="#e5e7eb" font-size="7" text-anchor="middle">דוד לוי</text>
+          <text x="225" y="22" fill="#e5e7eb" font-size="7" text-anchor="middle">תל אביב</text>
+          <text x="60"  y="137" fill="#e5e7eb" font-size="7" text-anchor="middle">052-1234567</text>
+          <text x="220" y="137" fill="#e5e7eb" font-size="7" text-anchor="middle">12-345-67</text>
+        </svg>
+      </div>
+      <p style="font-size:11px">גודל צומת = אזכורים · קו = הופעה משותפת בראיה · צבע = סוג. דאבל-קליק על צומת מחפש את מופעיו.</p>
+
+      <h3>⚠️ Contradictions — סתירות</h3>
+      <p>המערכת מציפה זוגות קטעים דומים מראיות שונות שה-AI זיהה כסותרים, עם הסבר קצר.</p>
+    </div>
+  </div>
+
+  <div class="box example"><div class="t">דוגמה — סתירה שנתפסה</div>
+    עדות א': "ראיתי רכב <b>לבן</b> ליד הבית בשעה שמונה". עדות ב': "ראיתי רכב
+    <b>שחור</b> ליד הבית בשעה שמונה". המערכת סימנה: <b>contradiction</b> —
+    "העדים חלוקים על צבע הרכב באותו מועד ומקום".</div>
+
+  <div class="box tip"><div class="t">💡 סבלנות בטעינה ראשונה</div>
+    דף Contradictions מריץ שיפוט AI על זוגות מועמדים — הטעינה הראשונה
+    יכולה לקחת עד כ-2 דקות. זה עובד ברקע, לא תקוע.</div>
+
+  <div class="foot"><span>CaseMind Defense — חוברת הדרכה</span><span>עמוד 7</span></div>
+</div>
+
+<!-- ===== CHAPTER 5: MEDIA ===== -->
+<div class="page">
+  <h2><span class="chapnum">פרק 5</span> — הקלטות ווידאו (האזנות, חקירות)</h2>
+  <p class="lead">הקלטות ווידאו הם ראיה ככל ראיה אחרת: מייבאים, המערכת מתמללת ברקע,
+    והתמליל נכנס לחיפוש, לישויות ול-AI — עם ציטוט לחותמת הזמן המדויקת.</p>
+
+  <ol class="steps">
+    <li><b>ייבא</b> קובץ <code>wav / mp3 / m4a / mp4 / mov</code> כמו כל ראיה.</li>
+    <li>הסטטוס יעבור דרך <span class="pill pr">processing</span> ⟵ <span class="pill md">transcribed</span> בסיום התמלול.</li>
+    <li><b>חפש או שאל</b> — התוצאות מההקלטה מסומנות בחותמת זמן <code>time:MM:SS-MM:SS</code>.</li>
+    <li><b>אמת</b> — האזן לקטע המקורי סביב חותמת הזמן שהמערכת החזירה.</li>
+  </ol>
+
+  <div class="shot">
+    <div class="chrome"><span class="dot3" style="background:#ef4444"></span><span class="dot3" style="background:#f59e0b"></span><span class="dot3" style="background:#22c55e"></span><span class="t">האזנה 17.3.mp3 · תומלל מקומית (ivrit.ai)</span></div>
+    <div class="app"><div class="main">
+      <table class="ui">
+        <tr><th>זמן</th><th>תמליל</th></tr>
+        <tr><td>time:12:04-14:31</td><td>…לא, אני לא מדבר על זה בטלפון…</td></tr>
+        <tr class="sel"><td>time:14:32-15:10</td><td>…תעביר את <span class="hl">המעטפה</span> ליד הבית, עם הרכב הלבן, תתקשר לדוד מחר…</td></tr>
+        <tr><td>time:15:11-16:47</td><td>…בסדר, נדבר אחרי זה…</td></tr>
+      </table>
+    </div></div>
+  </div>
+
+  <div class="box warn"><div class="t">⚠️ ציפייה נכונה מתמלול האזנות</div>
+    איכות התמלול תלויה באיכות ההקלטה (רעש, דיבור חופף, טלפון). המטרה היא
+    <b>למצוא את הדקה הנכונה</b> בהקלטה של שעתיים — לא תמליל מילה-במילה לבית
+    משפט. את הקטע שנמצא מאזינים במקור החתום. זיהוי דוברים ("מי אמר מה")
+    אינו נתמך עדיין.</div>
+
+  <div class="box tip"><div class="t">💡 שיפור תמלול עברית</div>
+    ברירת המחדל במכונה זו היא מודל מכוונן-עברית (ivrit.ai). להקלטות שרובן
+    רוסית, ניתן לשנות את <code>CASEMIND_WHISPER_MODEL</code> ל-<code>medium</code>.</div>
+
+  <div class="foot"><span>CaseMind Defense — חוברת הדרכה</span><span>עמוד 8</span></div>
+</div>
+
+<!-- ===== CHAPTER 6+7: REPORTS + SECURITY ===== -->
+<div class="page">
+  <h2><span class="chapnum">פרק 6</span> — הפקת דוח תיק</h2>
+  <ol class="steps">
+    <li>בדף <b>Evidence</b>, בחר את התיק הרצוי ברשימת ה-Case (או All Cases).</li>
+    <li>לחץ <span class="btn">Report</span>. הדוח נוצר ונפתח אוטומטית בדפדפן.</li>
+    <li>ל-PDF: בדפדפן לחץ <b>Ctrl+P</b> ⟵ "שמור כ-PDF". העברית מיושרת אוטומטית.</li>
+  </ol>
+  <p>הדוח כולל: <b>מצאי ראיות</b> עם חתימות SHA256 (שרשרת משמורת), <b>ציר זמן</b>,
+  <b>ישויות מרכזיות</b> ו<b>יומן פעולות</b> מלא — מסמך מסודר לצירוף לתיק.</p>
+
+  <h2 style="margin-top:8mm"><span class="chapnum">פרק 7</span> — אבטחה, שלמות ותחזוקה (דף Settings)</h2>
+
+  <h3>בדיקת שלמות ראיות</h3>
+  <p>לחץ <b>Verify Evidence Integrity</b> — המערכת מחשבת מחדש את החתימה של
+  כל קובץ ומשווה למה שנרשם בקליטה. קובץ ראיה ששונה ולו בתו אחד — יסומן
+  מיד. כך אתה מוכיח שהראיות לא שונו.</p>
+
+  <div class="box example"><div class="t">דוגמה — למה זה חשוב</div>
+    לפני הגשת דוח לבית משפט, הרץ בדיקת שלמות. תוצאה נקייה = הוכחה טכנית
+    ששרשרת המשמורת נשמרה. גם יומן הפעולות עצמו חתום בשרשרת — ניסיון לשכתב
+    היסטוריה מתגלה.</div>
+
+  <h3>גיבוי</h3>
+  <p>לחץ <b>Create Backup</b> — נוצר קובץ zip אחד המכיל את מסד הנתונים ואת
+  כל הראיות, תחת <code>backend\data\backups</code>. <b>שחזור:</b> פתח את
+  ה-zip והחזר את הקבצים למקומם.</p>
+
+  <div class="box tip"><div class="t">💡 שגרת עבודה מומלצת</div>
+    גבה בסוף כל יום עבודה על תיק. הפעל <b>BitLocker</b> על הכונן להצפנה
+    מלאה (מגן על הראיות, הגיבויים והדוחות) — במיוחד אם המחשב נייד.</div>
+
+  <div class="foot"><span>CaseMind Defense — חוברת הדרכה</span><span>עמוד 9</span></div>
+</div>
+
+<!-- ===== TIPS + FAQ ===== -->
+<div class="page">
+  <h2>טיפים לעבודה יעילה</h2>
+  <ul class="dot">
+    <li><b>תיק לכל לקוח.</b> אל תערבב ראיות של תיקים שונים — צור Case נפרד לכל אחד.</li>
+    <li><b>Refresh הוא חברך.</b> אחרי ייבוא גדול, רענן מדי פעם כדי לעקוב אחרי סיום העיבוד.</li>
+    <li><b>התחל רחב, צמצם.</b> חיפוש סמנטי למציאת הכיוון, ואז מילולי לביטוי המדויק.</li>
+    <li><b>הצלב מקורות.</b> שאל את ה-AI על סתירות ובדוק אותן מול דף Contradictions.</li>
+    <li><b>אמת לפני שמסתמכים.</b> כל ציטוט לחיץ — פתח את המקור לפני שאתה מצטט בבית משפט.</li>
+    <li><b>גבה, ואז בדוק שלמות.</b> שתי לחיצות בדף Settings שמגנות על כל העבודה.</li>
+  </ul>
+
+  <h2 style="margin-top:7mm">שאלות נפוצות</h2>
+  <table class="ref">
+    <tr><td style="width:60mm"><b>המידע שלי נשלח לענן?</b></td><td>לא. הכול — מסמכים, הקלטות ומנועי ה-AI — רץ מקומית על המחשב שלך בלבד.</td></tr>
+    <tr><td><b>ייבאתי קובץ והוא תקוע ב-processing</b></td><td>סריקות והקלטות לוקחות זמן. לחץ Refresh. אם נתקע לאורך זמן — בדוק את הלוג (ראה נספח).</td></tr>
+    <tr><td><b>למה קובץ מסוים לא נכנס לחיפוש?</b></td><td>בדוק את הסטטוס שלו בטבלה. <code>no_text_found</code> = לא נמצא טקסט; <code>extraction_not_supported</code> = סוג קובץ שאין ממנו חילוץ (docx/eml).</td></tr>
+    <tr><td><b>ה-AI ענה "לא נמצא"</b></td><td>זו התנהגות תקינה — אין בתיק ראיה שעונה על השאלה. המערכת לא ממציאה.</td></tr>
+    <tr><td><b>מחקתי ראיה בטעות</b></td><td>המחיקה סופית. שחזר מהגיבוי האחרון (דף Settings ⟵ הקובץ תחת backups).</td></tr>
+    <tr><td><b>איך אני מגדיר סיסמה למערכת?</b></td><td>הגדר את משתנה הסביבה <code>CASEMIND_API_KEY</code> בשני הצדדים — כל בקשה תדרוש מפתח.</td></tr>
+  </table>
+
+  <div class="foot"><span>CaseMind Defense — חוברת הדרכה</span><span>עמוד 10</span></div>
+</div>
+
+<!-- ===== APPENDIX ===== -->
+<div class="page">
+  <h2>נספח א' — טבלת סטטוסים</h2>
+  <p class="lead">הסטטוס בעמודת הטבלה מספר לך בדיוק מה קרה לכל ראיה.</p>
+  <table class="ref">
+    <tr><th style="width:42mm">סטטוס</th><th>משמעות</th></tr>
+    <tr><td><span class="st st-y">processing</span></td><td>בעיבוד ברקע — המתן ולחץ Refresh</td></tr>
+    <tr><td><span class="st st-g">indexed</span></td><td>טקסט חולץ ואונדקס — מוכן לחיפוש ולשאלות</td></tr>
+    <tr><td><span class="st st-g">ocr_indexed</span></td><td>סריקה עברה OCR ואונדקסה — מוכן</td></tr>
+    <tr><td><span class="st st-g">transcribed</span></td><td>הקלטה/וידאו תומללו ואונדקסו — מוכן</td></tr>
+    <tr><td><span class="st st-y">no_text_found</span></td><td>לא נמצא טקסט (מסמך ריק / הקלטה שקטה)</td></tr>
+    <tr><td><span class="st st-y">extraction_not_supported</span></td><td>סוג קובץ שאין ממנו חילוץ תוכן עדיין (docx/xlsx/eml)</td></tr>
+    <tr><td><span class="st st-r">text_extraction_failed</span></td><td>העיבוד נכשל — בדוק את הלוג</td></tr>
+    <tr><td><span class="st st-r">transcription_unavailable</span></td><td>מנוע התמלול לא זמין — ודא התקנה תקינה</td></tr>
+  </table>
+
+  <h2 style="margin-top:7mm">נספח ב' — פתרון תקלות</h2>
+  <table class="ref">
+    <tr><td style="width:55mm"><b>"Backend Unavailable" בהפעלה</b></td><td>הרץ שוב <code>scripts\setup.ps1</code>; ודא ש-<code>backend\.venv</code> קיים.</td></tr>
+    <tr><td><b>OCR לא מזהה עברית/רוסית</b></td><td>ודא ש-<code>backend\data\tessdata</code> מכיל את <code>heb</code> ו-<code>rus</code> (הסקריפט מוריד אותם).</td></tr>
+    <tr><td><b>ה-AI במצב "citations only"</b></td><td>Ollama לא רץ. הפעל: <code>ollama serve</code>.</td></tr>
+    <tr><td><b>כל תקלה אחרת</b></td><td>הקובץ <code>backend\data\logs\backend.log</code> מכיל את הפרטים — צרף אותו לכל דיווח.</td></tr>
+  </table>
+
+  <div style="margin-top:16mm; background:#0b1220; color:#e5e7eb; border-radius:10px; padding:8mm; text-align:center">
+    <div style="font-size:19px; font-weight:800">CaseMind <span style="color:#60a5fa">Defense</span></div>
+    <div style="font-size:11px; color:#9ca3af; margin-top:2mm">חוברת הדרכה · גרסה 0.15 · יולי 2026</div>
+    <div style="font-size:10px; color:#6b7280; margin-top:3mm">כל הנתונים והדוגמאות בחוברת זו בדויים לצורך הדגמה בלבד.</div>
+  </div>
+
+  <div class="foot"><span>CaseMind Defense — חוברת הדרכה</span><span>עמוד 11</span></div>
+</div>
+
+</body>
+</html>
