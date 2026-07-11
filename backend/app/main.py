@@ -2,7 +2,8 @@ import logging
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from app.core.security import require_api_key
 from app.core.settings import get_settings
@@ -35,6 +36,18 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="CaseMind Defense API", version="0.15-alpha", lifespan=lifespan)
+
+
+@app.exception_handler(Exception)
+async def _log_unhandled(request: Request, exc: Exception) -> JSONResponse:
+    # request-level 500s otherwise vanish into uvicorn's stderr (a hidden
+    # window in the packaged app); log the full traceback to backend.log so
+    # every server error is diagnosable from the file the user can send
+    logging.getLogger("app.request").exception(
+        "unhandled error on %s %s", request.method, request.url.path
+    )
+    return JSONResponse(status_code=500, content={"detail": "internal server error"})
+
 
 # /health stays open (liveness probe); everything else requires the API key
 # whenever CASEMIND_API_KEY is set
