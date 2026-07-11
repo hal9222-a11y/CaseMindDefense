@@ -46,6 +46,7 @@ class EvidencePage(QWidget):
         self.toolbar.refresh_clicked.connect(self._refresh)
         self.toolbar.import_clicked.connect(self._pick_and_import)
         self.toolbar.import_folder_clicked.connect(self._pick_and_import_folder)
+        self.toolbar.delete_clicked.connect(self._delete_selected)
         self.toolbar.new_case_clicked.connect(self._create_case)
         self.toolbar.report_clicked.connect(self._generate_report)
         self.toolbar.case_changed.connect(lambda _case_id: self._refresh())
@@ -167,6 +168,42 @@ class EvidencePage(QWidget):
         self.preview.show_evidence(item, highlight=self._pending_highlight)
         self.inspector.show_evidence(item)
         self._pending_highlight = None
+        self.toolbar.set_delete_enabled(True)
+
+    def _delete_selected(self) -> None:
+        item = self.table.current_item()
+        if item is None:
+            return
+        filename = item.get("filename", "")
+        confirm = QMessageBox.question(
+            self,
+            "מחיקת ראיה",
+            f"למחוק לצמיתות את הראיה?\n\n{filename}\n\n"
+            "הקובץ המאוחסן והאינדוקס יימחקו. הפעולה תירשם ביומן הפעולות "
+            "ואינה הפיכה.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        self.toolbar.set_busy(True)
+        run_async(
+            self.api.delete_evidence,
+            item.get("id"),
+            on_done=lambda _res: self._on_deleted(filename),
+            on_error=self._on_delete_failed,
+        )
+
+    def _on_deleted(self, filename: str) -> None:
+        self.preview.clear()
+        self.inspector.clear()
+        self.toolbar.set_delete_enabled(False)
+        self._refresh()
+        QMessageBox.information(self, "נמחק", f"הראיה נמחקה:\n{filename}")
+
+    def _on_delete_failed(self, error: str) -> None:
+        self.toolbar.set_busy(False)
+        QMessageBox.critical(self, "מחיקה נכשלה", error)
 
     def focus_evidence(self, evidence_id: int, snippet: str | None = None) -> None:
         """Citation navigation: select the evidence row and highlight the
@@ -179,6 +216,7 @@ class EvidencePage(QWidget):
 
     def _on_loaded(self, items: list[dict[str, Any]]) -> None:
         self.toolbar.set_busy(False)
+        self.toolbar.set_delete_enabled(False)  # selection is cleared on reload
         self.table.set_items(items)
         if self._pending_focus_id is not None:
             found = self.table.select_by_id(self._pending_focus_id)

@@ -37,3 +37,6 @@ class InspectorWidget(QWidget):
             lines.append(str(item.get(key, "")))
             lines.append("")
         self._view.setPlainText("\n".join(lines).strip())
+
+    def clear(self) -> None:
+        self._view.clear()

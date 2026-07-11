@@ -58,6 +58,12 @@ class EvidenceTableWidget(QTableWidget):
                 return True
         return False
 
+    def current_item(self) -> dict[str, Any] | None:
+        row = self.currentRow()
+        if 0 <= row < len(self._items):
+            return self._items[row]
+        return None
+
     @staticmethod
     def _human_size(size_bytes: int) -> str:
         if size_bytes >= 1024 * 1024:

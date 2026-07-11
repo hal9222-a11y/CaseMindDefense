@@ -115,3 +115,8 @@ class PreviewWidget(QWidget):
     def _show_message(self, message: str) -> None:
         self._message_label.setText(message)
         self._stack.setCurrentIndex(0)
+
+    def clear(self) -> None:
+        self._current_id = None
+        self._highlight = None
+        self._show_message("Select evidence to preview.")
