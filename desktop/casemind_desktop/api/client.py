@@ -70,6 +70,14 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def delete_evidence(self, evidence_id: int) -> dict[str, Any]:
+        response = self._session.delete(
+            self._url(f"{endpoints.EVIDENCE}/{evidence_id}"),
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def list_cases(self) -> list[dict[str, Any]]:
         response = self._session.get(self._url(endpoints.CASES), timeout=REQUEST_TIMEOUT)
         response.raise_for_status()

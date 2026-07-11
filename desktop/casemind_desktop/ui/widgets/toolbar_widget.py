@@ -17,6 +17,7 @@ class ToolbarWidget(QWidget):
     refresh_clicked = Signal()
     import_clicked = Signal()
     import_folder_clicked = Signal()
+    delete_clicked = Signal()
     new_case_clicked = Signal()
     report_clicked = Signal()
     case_changed = Signal(object)  # int case id, or None for "All Cases"
@@ -29,6 +30,13 @@ class ToolbarWidget(QWidget):
         self.refresh_button = QPushButton("Refresh")
         self.import_button = QPushButton("Import File")
         self.import_folder_button = QPushButton("Import Folder")
+        self.delete_button = QPushButton("Delete")
+        # destructive: red, and disabled until a row is selected
+        self.delete_button.setStyleSheet(
+            "QPushButton { background: #b91c1c; } QPushButton:hover { background: #dc2626; }"
+            "QPushButton:disabled { background: #4b5563; }"
+        )
+        self.delete_button.setEnabled(False)
         self.new_case_button = QPushButton("New Case")
         self.report_button = QPushButton("Report")
         self.case_selector = QComboBox()
@@ -37,6 +45,7 @@ class ToolbarWidget(QWidget):
         self.refresh_button.clicked.connect(self.refresh_clicked)
         self.import_button.clicked.connect(self.import_clicked)
         self.import_folder_button.clicked.connect(self.import_folder_clicked)
+        self.delete_button.clicked.connect(self.delete_clicked)
         self.new_case_button.clicked.connect(self.new_case_clicked)
         self.report_button.clicked.connect(self.report_clicked)
         self.case_selector.currentIndexChanged.connect(self._on_case_changed)
@@ -50,6 +59,7 @@ class ToolbarWidget(QWidget):
         layout.addWidget(self.refresh_button)
         layout.addWidget(self.import_button)
         layout.addWidget(self.import_folder_button)
+        layout.addWidget(self.delete_button)
         layout.addWidget(self.report_button)
         layout.addStretch()
         self.setLayout(layout)
@@ -71,7 +81,12 @@ class ToolbarWidget(QWidget):
     def _on_case_changed(self, _index: int) -> None:
         self.case_changed.emit(self.current_case_id())
 
+    def set_delete_enabled(self, enabled: bool) -> None:
+        self.delete_button.setEnabled(enabled)
+
     def set_busy(self, busy: bool) -> None:
         self.refresh_button.setEnabled(not busy)
         self.import_button.setEnabled(not busy)
         self.import_folder_button.setEnabled(not busy)
+        if busy:
+            self.delete_button.setEnabled(False)
