@@ -163,6 +163,14 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def suggest_aliases(self, case_id: int) -> list[dict[str, Any]]:
+        response = self._session.get(
+            self._url(f"{endpoints.PERSONS}/suggest-aliases"),
+            params={"case_id": case_id}, timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def generate_report(self, case_id: int | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {}
         if case_id is not None:

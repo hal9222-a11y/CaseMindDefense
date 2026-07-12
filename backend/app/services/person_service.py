@@ -103,3 +103,76 @@ def suggest_phone_links(session: Session, case_id: int) -> list[dict]:
                     }
 
     return sorted(best.values(), key=lambda s: -s["confidence"])
+
+
+NAME_LABELS = {"person", "name", "hebrew_term"}
+
+
+def _norm_name(name: str) -> str:
+    return " ".join(name.split()).strip()
+
+
+def suggest_alias_links(session: Session, case_id: int) -> list[dict]:
+    """Guess that a name appearing in the evidence is a nickname/variant of an
+    existing person, so the user can merge them under one person. High
+    precision: the candidate must be a name-token of the person's full name
+    (e.g. 'דוד' for 'דוד לוי') or a short prefix nickname (דוד -> דודי).
+    On-demand; accept by adding an alias link."""
+    persons = session.exec(select(Person).where(Person.case_id == case_id)).all()
+    if not persons:
+        return []
+    person_ids = [p.id for p in persons]
+
+    # names already claimed (a person's own name or an existing alias) — skip
+    claimed: set[str] = {_norm_name(p.name) for p in persons}
+    existing_aliases: dict[int, set[str]] = {}
+    for ln in session.exec(
+        select(PersonLink).where(
+            PersonLink.person_id.in_(person_ids), PersonLink.kind == "alias"
+        )
+    ).all():
+        existing_aliases.setdefault(ln.person_id, set()).add(_norm_name(ln.value))
+        claimed.add(_norm_name(ln.value))
+
+    # candidate names from the case's extracted entities
+    from app.models.evidence import ExtractedEntity
+
+    candidates = {
+        _norm_name(text)
+        for (text, label) in session.exec(
+            select(ExtractedEntity.text, ExtractedEntity.label).where(
+                ExtractedEntity.evidence_id.in_(
+                    select(Evidence.id).where(Evidence.case_id == case_id)
+                )
+            )
+        ).all()
+        if label in NAME_LABELS and len(_norm_name(text)) >= 2
+    }
+
+    results: list[dict] = []
+    for person in persons:
+        pname = _norm_name(person.name)
+        tokens = set(pname.split())
+        already = existing_aliases.get(person.id, set())
+        for cand in candidates:
+            if cand == pname or cand in already:
+                continue
+            confidence = 0.0
+            reason = ""
+            if cand in tokens:  # 'דוד' is a token of 'דוד לוי'
+                confidence, reason = 0.9, "חלק מהשם המלא"
+            else:
+                for tok in tokens:
+                    # short prefix nickname: דוד -> דודי (1-2 extra chars)
+                    if len(cand) > len(tok) >= 3 and cand.startswith(tok) and len(cand) - len(tok) <= 2:
+                        confidence, reason = 0.6, "כינוי אפשרי"
+                        break
+            if confidence:
+                results.append({
+                    "person_id": person.id,
+                    "person_name": person.name,
+                    "alias": cand,
+                    "confidence": confidence,
+                    "reason": reason,
+                })
+    return sorted(results, key=lambda s: -s["confidence"])
