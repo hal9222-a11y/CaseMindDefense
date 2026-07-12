@@ -9,6 +9,7 @@ router = APIRouter(prefix="/timeline", tags=["timeline"])
 def timeline(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    case_id: int | None = Query(None),
     session: Session = Depends(get_session),
 ):
-    return build_timeline(session)[offset : offset + limit]
+    return build_timeline(session, case_id=case_id)[offset : offset + limit]

@@ -18,12 +18,14 @@ def _citations_only_answer(citations: list[dict]) -> str:
     return "\n".join(lines).strip()
 
 
-def answer_with_evidence(session: Session, question: str, limit: int = 5) -> dict:
+def answer_with_evidence(
+    session: Session, question: str, limit: int = 5, case_id: int | None = None
+) -> dict:
     question = (question or "").strip()
     if not question:
         return {"answer": "No question provided.", "citations": [], "mode": "none"}
 
-    results = semantic_search(session=session, query=question, limit=limit)
+    results = semantic_search(session=session, query=question, limit=limit, case_id=case_id)
     if not results:
         return {"answer": NOT_FOUND_ANSWER, "citations": [], "mode": "none"}
 

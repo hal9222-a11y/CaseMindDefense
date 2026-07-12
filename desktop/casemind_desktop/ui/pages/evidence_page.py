@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QInputDialog,
@@ -32,6 +32,9 @@ class EvidencePage(QWidget):
     """Thin orchestrator: wires toolbar, table, preview, and inspector widgets
     to the EvidenceController."""
 
+    # emitted when the active case scope changes (int case id, or None for all)
+    case_scope_changed = Signal(object)
+
     def __init__(self, api: ApiClient | None = None) -> None:
         super().__init__()
 
@@ -49,7 +52,7 @@ class EvidencePage(QWidget):
         self.toolbar.delete_clicked.connect(self._delete_selected)
         self.toolbar.new_case_clicked.connect(self._create_case)
         self.toolbar.report_clicked.connect(self._generate_report)
-        self.toolbar.case_changed.connect(lambda _case_id: self._refresh())
+        self.toolbar.case_changed.connect(self._on_case_changed)
 
         self._pending_highlight: str | None = None
         self._pending_focus_id: int | None = None
@@ -150,6 +153,12 @@ class EvidencePage(QWidget):
         path = result.get("path")
         if path:
             os.startfile(path)  # noqa: S606 (local file, user-initiated)
+
+    def _on_case_changed(self, case_id: object) -> None:
+        # scope all analysis views to the selected case, then reload evidence
+        self.api.current_case_id = case_id
+        self.case_scope_changed.emit(case_id)
+        self._refresh()
 
     def _refresh(self) -> None:
         self.toolbar.set_busy(True)

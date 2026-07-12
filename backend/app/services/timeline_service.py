@@ -48,10 +48,15 @@ def _snippet(text: str, start: int, end: int) -> str:
     return f"{prefix}{text[left:right]}{suffix}"
 
 
-def build_timeline(session: Session) -> list[dict]:
+def build_timeline(session: Session, case_id: int | None = None) -> list[dict]:
+    from app.services.scope import case_evidence_ids
+
+    allowed = case_evidence_ids(session, case_id)
     events: list[dict] = []
 
     for chunk in session.exec(select(EvidenceChunk)).all():
+        if allowed is not None and chunk.evidence_id not in allowed:
+            continue
         text = chunk.text or ""
         for match in DATE_RE.finditer(text):
             raw_date = match.group(1)

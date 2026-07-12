@@ -11,12 +11,15 @@ from app.services.embedding_service import (
     embed_text,
     embedding_model_name,
 )
+from app.services.scope import case_evidence_ids
 
 
 logger = logging.getLogger(__name__)
 
 
-def semantic_search(session: Session, query: str, limit: int = 10) -> list[dict]:
+def semantic_search(
+    session: Session, query: str, limit: int = 10, case_id: int | None = None
+) -> list[dict]:
     query = (query or "").strip()
 
     if not query:
@@ -27,12 +30,16 @@ def semantic_search(session: Session, query: str, limit: int = 10) -> list[dict]
     if not query_embedding:
         return []
 
+    allowed = case_evidence_ids(session, case_id)
     current_model = embedding_model_name()
     chunks = session.exec(select(EvidenceChunk)).all()
     evidence_cache: dict[int, Evidence | None] = {}
     results: list[dict] = []
 
     for chunk in chunks:
+        if allowed is not None and chunk.evidence_id not in allowed:
+            continue
+
         # same dimension does not mean same vector space (MiniLM and e5 are
         # both 384-d) - compare by recorded model and require a reindex
         if chunk.embedding_model and chunk.embedding_model != current_model:

@@ -9,7 +9,10 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 class AskRequest(BaseModel):
     question: str
     limit: int = Field(5, ge=1, le=20)
+    case_id: int | None = None
 
 @router.post("/ask")
 def ask(req: AskRequest, session: Session = Depends(get_session)):
-    return answer_with_evidence(session=session, question=req.question, limit=req.limit)
+    return answer_with_evidence(
+        session=session, question=req.question, limit=req.limit, case_id=req.case_id
+    )
