@@ -5,6 +5,7 @@ import math
 from PySide6.QtCore import QPointF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
+    QComboBox,
     QGraphicsEllipseItem,
     QGraphicsScene,
     QGraphicsView,
@@ -47,17 +48,23 @@ class GraphPage(QWidget):
         self.scene = QGraphicsScene()
         self.view = _GraphView(self.scene, self._on_node_double_clicked)
 
+        self.mode_selector = QComboBox()
+        self.mode_selector.addItem("Entities", "entities")
+        self.mode_selector.addItem("People (relations)", "people")
+        self.mode_selector.currentIndexChanged.connect(self._on_mode_changed)
+
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.clicked.connect(self.refresh)
 
-        title = QLabel("Entity Graph")
+        title = QLabel("Graph")
         title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        legend = QLabel("size = mentions · edge = shared evidence · double-click = search")
-        legend.setStyleSheet("color: #9CA3AF;")
+        self.legend = QLabel("size = mentions · edge = shared evidence · double-click = search")
+        self.legend.setStyleSheet("color: #9CA3AF;")
 
         top_bar = QHBoxLayout()
         top_bar.addWidget(title)
-        top_bar.addWidget(legend)
+        top_bar.addWidget(self.mode_selector)
+        top_bar.addWidget(self.legend)
         top_bar.addStretch()
         top_bar.addWidget(self.refresh_button)
 
@@ -72,9 +79,30 @@ class GraphPage(QWidget):
             self._loaded_once = True
             self.refresh()
 
+    def _mode(self) -> str:
+        return self.mode_selector.currentData()
+
+    def _on_mode_changed(self, _index: int) -> None:
+        people = self._mode() == "people"
+        self.legend.setText(
+            "אנשים · קו = קשר (אח / אבא של…) · double-click = חיפוש"
+            if people
+            else "size = mentions · edge = shared evidence · double-click = search"
+        )
+        self.refresh()
+
     def refresh(self) -> None:
         self.refresh_button.setEnabled(False)
-        run_async(self.api.entity_graph, on_done=self._on_loaded, on_error=self._on_failed)
+        if self._mode() == "people":
+            if self.api.current_case_id is None:
+                self.refresh_button.setEnabled(True)
+                self.scene.clear()
+                self.scene.addText("בחר תיק ספציפי בדף Evidence כדי לראות את רשת האנשים.")
+                return
+            run_async(self.api.person_graph, self.api.current_case_id,
+                      on_done=self._on_people_loaded, on_error=self._on_failed)
+        else:
+            run_async(self.api.entity_graph, on_done=self._on_loaded, on_error=self._on_failed)
 
     def reset(self) -> None:
         """Force a reload next time shown (used when the case scope changes)."""
@@ -84,6 +112,10 @@ class GraphPage(QWidget):
     def _on_loaded(self, graph: dict) -> None:
         self.refresh_button.setEnabled(True)
         self._draw(graph)
+
+    def _on_people_loaded(self, graph: dict) -> None:
+        self.refresh_button.setEnabled(True)
+        self._draw_people(graph)
 
     def _on_failed(self, error: str) -> None:
         self.refresh_button.setEnabled(True)
@@ -128,6 +160,47 @@ class GraphPage(QWidget):
             label = self.scene.addText(node["entity"])
             label.setDefaultTextColor(QColor("#F9FAFB"))
             label.setPos(pos.x() + size / 2 + 2, pos.y() - 10)
+
+        self.view.fitInView(self.scene.itemsBoundingRect(), Qt.KeepAspectRatio)
+
+    def _draw_people(self, graph: dict) -> None:
+        self.scene.clear()
+        nodes = graph.get("nodes", [])
+        edges = graph.get("edges", [])
+        if not nodes:
+            self.scene.addText("אין אנשים בתיק. הוסף אנשים בדף Persons.")
+            return
+
+        pos: dict[int, QPointF] = {}
+        for i, node in enumerate(nodes):
+            angle = 2 * math.pi * i / len(nodes)
+            pos[node["id"]] = QPointF(RADIUS * math.cos(angle), RADIUS * math.sin(angle))
+
+        for edge in edges:
+            a, b = pos.get(edge["a"]), pos.get(edge["b"])
+            if a is None or b is None:
+                continue
+            self.scene.addLine(a.x(), a.y(), b.x(), b.y(), QPen(QColor("#4B5563"), 2))
+            if edge.get("label"):
+                lbl = self.scene.addText(edge["label"])
+                lbl.setDefaultTextColor(QColor("#93C5FD"))
+                lbl.setPos((a.x() + b.x()) / 2, (a.y() + b.y()) / 2)
+
+        for node in nodes:
+            p = pos[node["id"]]
+            size = 26
+            # blue = appears in evidence, grey = added manually
+            color = QColor("#3B82F6" if node.get("in_evidence", True) else "#9CA3AF")
+            item = QGraphicsEllipseItem(p.x() - size / 2, p.y() - size / 2, size, size)
+            item.setBrush(QBrush(color))
+            item.setPen(QPen(Qt.NoPen))
+            tip = node["name"] + (f" — {node['description']}" if node.get("description") else "")
+            item.setToolTip(tip)
+            item.setData(0, node["name"])
+            self.scene.addItem(item)
+            label = self.scene.addText(node["name"])
+            label.setDefaultTextColor(QColor("#F9FAFB"))
+            label.setPos(p.x() + size / 2 + 2, p.y() - 10)
 
         self.view.fitInView(self.scene.itemsBoundingRect(), Qt.KeepAspectRatio)
 

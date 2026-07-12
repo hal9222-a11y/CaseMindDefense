@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **People relationship graph**: the Entity Graph page has a mode toggle
+  — Entities (co-occurrence) or People (relations). People mode draws each
+  person as a node with their explicit relations as labelled edges
+  (אמיר —שותף→ דוד), so the who-is-connected-to-who network is visible at
+  a glance. `GET /persons/graph`
+
 - **Nickname suggestions**: the Persons page can guess that a name in the
   evidence is a variant of an existing person — part of the full name
   ('דוד' for 'דוד לוי') or a short prefix nickname (דוד → דודי) — to merge

@@ -105,6 +105,27 @@ def suggest_phone_links(session: Session, case_id: int) -> list[dict]:
     return sorted(best.values(), key=lambda s: -s["confidence"])
 
 
+def person_graph(session: Session, case_id: int) -> dict:
+    """People of a case as nodes, their explicit relations as labelled edges
+    (e.g. A —אח→ B). Lets the user see the who-is-connected-to-who network."""
+    persons = session.exec(select(Person).where(Person.case_id == case_id)).all()
+    ids = {p.id for p in persons}
+    nodes = [
+        {"id": p.id, "name": p.name, "description": p.description, "in_evidence": p.in_evidence}
+        for p in persons
+    ]
+    edges = []
+    if ids:
+        for ln in session.exec(
+            select(PersonLink).where(
+                PersonLink.person_id.in_(list(ids)), PersonLink.kind == "relation"
+            )
+        ).all():
+            if ln.related_person_id in ids:
+                edges.append({"a": ln.person_id, "b": ln.related_person_id, "label": ln.value})
+    return {"nodes": nodes, "edges": edges}
+
+
 NAME_LABELS = {"person", "name", "hebrew_term"}
 
 
