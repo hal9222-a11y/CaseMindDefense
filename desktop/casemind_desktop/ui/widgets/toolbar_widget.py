@@ -19,6 +19,7 @@ class ToolbarWidget(QWidget):
     import_folder_clicked = Signal()
     delete_clicked = Signal()
     new_case_clicked = Signal()
+    delete_case_clicked = Signal()
     report_clicked = Signal()
     case_changed = Signal(object)  # int case id, or None for "All Cases"
 
@@ -38,6 +39,12 @@ class ToolbarWidget(QWidget):
         )
         self.delete_button.setEnabled(False)
         self.new_case_button = QPushButton("New Case")
+        self.delete_case_button = QPushButton("Delete Case")
+        self.delete_case_button.setStyleSheet(
+            "QPushButton { background: #b91c1c; } QPushButton:hover { background: #dc2626; }"
+            "QPushButton:disabled { background: #4b5563; }"
+        )
+        self.delete_case_button.setEnabled(False)  # only when a real case is selected
         self.report_button = QPushButton("Report")
         self.case_selector = QComboBox()
         self.case_selector.setMinimumWidth(180)
@@ -47,6 +54,7 @@ class ToolbarWidget(QWidget):
         self.import_folder_button.clicked.connect(self.import_folder_clicked)
         self.delete_button.clicked.connect(self.delete_clicked)
         self.new_case_button.clicked.connect(self.new_case_clicked)
+        self.delete_case_button.clicked.connect(self.delete_case_clicked)
         self.report_button.clicked.connect(self.report_clicked)
         self.case_selector.currentIndexChanged.connect(self._on_case_changed)
 
@@ -55,6 +63,7 @@ class ToolbarWidget(QWidget):
         layout.addWidget(QLabel("Case:"))
         layout.addWidget(self.case_selector)
         layout.addWidget(self.new_case_button)
+        layout.addWidget(self.delete_case_button)
         layout.addSpacing(16)
         layout.addWidget(self.refresh_button)
         layout.addWidget(self.import_button)
@@ -74,12 +83,15 @@ class ToolbarWidget(QWidget):
             if case.get("id") == selected:
                 self.case_selector.setCurrentIndex(self.case_selector.count() - 1)
         self.case_selector.blockSignals(False)
+        self.delete_case_button.setEnabled(self.current_case_id() is not None)
 
     def current_case_id(self) -> int | None:
         return self.case_selector.currentData()
 
     def _on_case_changed(self, _index: int) -> None:
-        self.case_changed.emit(self.current_case_id())
+        case_id = self.current_case_id()
+        self.delete_case_button.setEnabled(case_id is not None)
+        self.case_changed.emit(case_id)
 
     def set_delete_enabled(self, enabled: bool) -> None:
         self.delete_button.setEnabled(enabled)

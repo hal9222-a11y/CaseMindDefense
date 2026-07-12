@@ -168,6 +168,30 @@ def import_file(session: Session, source_path: str, case_id: int | None = None) 
     return index_evidence(session, evidence.id)
 
 
+def delete_evidence_record(session: Session, evidence: Evidence) -> None:
+    """Remove an evidence row and everything derived from it: chunks (via the
+    ORM so the FTS delete triggers fire), extracted entities, and the stored
+    file. Caller commits and audits. Shared by single-item delete and full
+    case delete."""
+    from sqlmodel import delete as sql_delete
+
+    for chunk in session.exec(
+        select(EvidenceChunk).where(EvidenceChunk.evidence_id == evidence.id)
+    ).all():
+        session.delete(chunk)
+    session.exec(sql_delete(ExtractedEntity).where(ExtractedEntity.evidence_id == evidence.id))
+
+    stored = Path(evidence.stored_path)
+    session.delete(evidence)
+    session.commit()
+
+    if stored.exists():
+        try:
+            stored.unlink()
+        except OSError:
+            pass  # file locked/gone; the DB record is already removed
+
+
 def import_folder(session: Session, folder_path: str, case_id: int | None = None) -> dict:
     root = Path(folder_path).resolve()
     if not root.exists() or not root.is_dir():

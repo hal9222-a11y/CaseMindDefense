@@ -99,6 +99,13 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def delete_case(self, case_id: int) -> dict[str, Any]:
+        response = self._session.delete(
+            self._url(f"{endpoints.CASES}/{case_id}"), timeout=300
+        )
+        response.raise_for_status()
+        return response.json()
+
     def generate_report(self, case_id: int | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {}
         if case_id is not None:
