@@ -31,6 +31,23 @@ def _person_names(person: Person, aliases: dict[int, list[str]]) -> list[str]:
     return [n for n in names if len(n) >= 2]
 
 
+def _nearest_gap(text: str, name: str, p_start: int, p_end: int) -> int | None:
+    """Smallest character gap between the phone span and ANY occurrence of the
+    name (text.find returns only the first, which misses a name mentioned
+    again right next to the number). None if the name is absent."""
+    best: int | None = None
+    start = 0
+    while True:
+        idx = text.find(name, start)
+        if idx == -1:
+            break
+        gap = min(abs(idx - p_end), abs(p_start - (idx + len(name))))
+        if best is None or gap < best:
+            best = gap
+        start = idx + 1
+    return best
+
+
 def suggest_phone_links(session: Session, case_id: int) -> list[dict]:
     """Scan the case's text for phone numbers sitting near a person's name or
     alias and propose linking them. On-demand; nothing is persisted until the
@@ -74,20 +91,17 @@ def suggest_phone_links(session: Session, case_id: int) -> list[dict]:
             norm = _norm_phone(phone)
             p_start, p_end = m.start(), m.end()
             for name, person in name_index:
-                idx = text.find(name)
-                if idx == -1:
-                    continue
-                # nearest gap between the name span and the phone span
-                distance = min(abs(idx - p_end), abs(p_start - (idx + len(name))))
-                if distance > NEAR_WINDOW:
-                    continue
                 if (person.id, norm) in already:
+                    continue
+                distance = _nearest_gap(text, name, p_start, p_end)
+                if distance is None or distance > NEAR_WINDOW:
                     continue
                 confidence = round(
                     MIN_CONFIDENCE + (1 - MIN_CONFIDENCE) * (1 - distance / NEAR_WINDOW), 2
                 )
                 key = (person.id, norm)
                 if key not in best or confidence > best[key]["confidence"]:
+                    idx = text.find(name)
                     snippet_start = max(0, min(p_start, idx) - 20)
                     snippet_end = min(len(text), max(p_end, idx + len(name)) + 20)
                     best[key] = {
@@ -144,15 +158,14 @@ def suggest_alias_links(session: Session, case_id: int) -> list[dict]:
         return []
     person_ids = [p.id for p in persons]
 
-    # names already claimed (a person's own name or an existing alias) — skip
+    # names already claimed by any person in the case (their own name or an
+    # existing alias) — a candidate that IS one of these is not a new alias
     claimed: set[str] = {_norm_name(p.name) for p in persons}
-    existing_aliases: dict[int, set[str]] = {}
     for ln in session.exec(
         select(PersonLink).where(
             PersonLink.person_id.in_(person_ids), PersonLink.kind == "alias"
         )
     ).all():
-        existing_aliases.setdefault(ln.person_id, set()).add(_norm_name(ln.value))
         claimed.add(_norm_name(ln.value))
 
     # candidate names from the case's extracted entities
@@ -174,9 +187,10 @@ def suggest_alias_links(session: Session, case_id: int) -> list[dict]:
     for person in persons:
         pname = _norm_name(person.name)
         tokens = set(pname.split())
-        already = existing_aliases.get(person.id, set())
         for cand in candidates:
-            if cand == pname or cand in already:
+            # skip names that are already someone's name or alias (in this
+            # case) — a candidate that IS another person is not an alias
+            if cand in claimed:
                 continue
             confidence = 0.0
             reason = ""
