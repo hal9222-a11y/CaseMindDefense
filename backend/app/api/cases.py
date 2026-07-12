@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app.db import get_session
-from app.models.evidence import Case, Evidence
+from app.models.evidence import Case, Evidence, Person, PersonLink
 from app.services.audit_service import log_event
 from app.services.evidence_service import delete_evidence_record
 
@@ -50,6 +50,17 @@ def delete_case(case_id: int, session: Session = Depends(get_session)):
     evidence = session.exec(select(Evidence).where(Evidence.case_id == case_id)).all()
     for ev in evidence:
         delete_evidence_record(session, ev)
+
+    # people and their links belong to the case too
+    person_ids = session.exec(select(Person.id).where(Person.case_id == case_id)).all()
+    if person_ids:
+        for link in session.exec(
+            select(PersonLink).where(PersonLink.person_id.in_(person_ids))
+        ).all():
+            session.delete(link)
+        for person in session.exec(select(Person).where(Person.case_id == case_id)).all():
+            session.delete(person)
+        session.commit()
 
     name = case.name
     session.delete(case)
