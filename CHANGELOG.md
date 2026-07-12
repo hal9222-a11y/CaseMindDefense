@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Nickname suggestions**: the Persons page can guess that a name in the
+  evidence is a variant of an existing person — part of the full name
+  ('דוד' for 'דוד לוי') or a short prefix nickname (דוד → דודי) — to merge
+  them under one person. `GET /persons/suggest-aliases`
+- **Visual photo picker**: linking a photo to a person now shows the
+  case's images with a live preview instead of typing an evidence id
+
 - **Phone-to-person suggestions**: the Persons page can guess which phone
   numbers belong to which people (a number sitting close to a person's
   name/alias in the text), ranked by confidence. `GET /persons/

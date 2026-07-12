@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.db import get_session
 from app.models.evidence import Case, Evidence, Person, PersonLink
 from app.services.audit_service import log_event
-from app.services.person_service import suggest_phone_links
+from app.services.person_service import suggest_alias_links, suggest_phone_links
 
 router = APIRouter(prefix="/persons", tags=["persons"])
 
@@ -63,6 +63,13 @@ def suggest_phones(case_id: int = Query(...), session: Session = Depends(get_ses
     based on how close the number sits to a person's name/alias in the
     text. Nothing is saved — accept a suggestion via POST /links."""
     return suggest_phone_links(session, case_id)
+
+
+@router.get("/suggest-aliases")
+def suggest_aliases(case_id: int = Query(...), session: Session = Depends(get_session)):
+    """Guess that a name in the evidence is a nickname/variant of an existing
+    person (part of the full name, or a short prefix nickname)."""
+    return suggest_alias_links(session, case_id)
 
 
 @router.get("")

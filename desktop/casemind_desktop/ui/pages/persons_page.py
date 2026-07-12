@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -18,6 +23,56 @@ from PySide6.QtWidgets import (
 
 from api.client import ApiClient
 from workers.api_worker import run_async
+
+IMAGE_PREVIEW_W = 320
+
+
+class PhotoPickerDialog(QDialog):
+    """Pick an image evidence to link to a person, with a live preview so the
+    user can see the face they are attaching."""
+
+    def __init__(self, parent, images: list[dict]) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("בחר תמונה לקישור")
+        self.resize(560, 420)
+        self._images = images
+        self.selected: dict | None = None
+
+        self.list = QListWidget()
+        for img in images:
+            self.list.addItem(QListWidgetItem(f"#{img.get('id')}  {img.get('filename', '')}"))
+        self.list.currentRowChanged.connect(self._on_row)
+
+        self.preview = QLabel("בחר תמונה")
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setMinimumWidth(IMAGE_PREVIEW_W)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        body = QHBoxLayout()
+        body.addWidget(self.list, 1)
+        body.addWidget(self.preview, 1)
+        layout = QVBoxLayout()
+        layout.addLayout(body)
+        layout.addWidget(buttons)
+        self.setLayout(layout)
+        if images:
+            self.list.setCurrentRow(0)
+
+    def _on_row(self, row: int) -> None:
+        if not (0 <= row < len(self._images)):
+            self.selected = None
+            return
+        self.selected = self._images[row]
+        stored = Path(self.selected.get("stored_path", ""))
+        if stored.exists():
+            pix = QPixmap(str(stored))
+            if not pix.isNull():
+                self.preview.setPixmap(pix.scaledToWidth(IMAGE_PREVIEW_W, Qt.SmoothTransformation))
+                return
+        self.preview.setText("אין תצוגה מקדימה")
 
 KIND_LABELS = {
     "alias": "כינוי / שם נוסף",
@@ -44,12 +99,14 @@ class PersonsPage(QWidget):
         self.new_button = QPushButton("New Person")
         self.new_ext_button = QPushButton("New (not in evidence)")
         self.suggest_button = QPushButton("🔍 Suggest phone links")
+        self.suggest_alias_button = QPushButton("🔍 Suggest nicknames")
         self.delete_button = QPushButton("Delete Person")
         self.delete_button.setStyleSheet("QPushButton { background: #b91c1c; }")
         self.refresh_button = QPushButton("Refresh")
         self.new_button.clicked.connect(lambda: self._create_person(True))
         self.new_ext_button.clicked.connect(lambda: self._create_person(False))
         self.suggest_button.clicked.connect(self._suggest_phones)
+        self.suggest_alias_button.clicked.connect(self._suggest_aliases)
         self.delete_button.clicked.connect(self._delete_person)
         self.refresh_button.clicked.connect(self.refresh)
 
@@ -59,6 +116,7 @@ class PersonsPage(QWidget):
         top.addWidget(self.new_button)
         top.addWidget(self.new_ext_button)
         top.addWidget(self.suggest_button)
+        top.addWidget(self.suggest_alias_button)
         top.addWidget(self.delete_button)
         top.addWidget(self.refresh_button)
 
@@ -244,18 +302,78 @@ class PersonsPage(QWidget):
         )
 
     def _add_photo(self) -> None:
-        if not self._selected:
+        if not self._selected or self.api.current_case_id is None:
             return
-        ev_id, ok = QInputDialog.getInt(
-            self, "קישור תמונה", "מזהה הראיה (ID) של התמונה מדף Evidence:", 1, 1
+        # fetch the case's image evidence, then show a visual picker
+        run_async(
+            self.api.list_evidence, self.api.current_case_id,
+            on_done=self._open_photo_picker, on_error=self._error,
         )
-        if not ok:
+
+    def _open_photo_picker(self, evidence: list[dict[str, Any]]) -> None:
+        images = [e for e in evidence if (e.get("mime_type") or "").startswith("image/")]
+        if not images:
+            QMessageBox.information(
+                self, "אין תמונות", "לא נמצאו תמונות בתיק. ייבא תמונה בדף Evidence תחילה."
+            )
+            return
+        dialog = PhotoPickerDialog(self, images)
+        if dialog.exec() != QDialog.Accepted or not dialog.selected:
             return
         caption, _ = QInputDialog.getText(self, "קישור תמונה", "כיתוב (רשות):")
         run_async(
-            self.api.add_person_link, self._selected["id"], "photo", caption.strip(), ev_id,
+            self.api.add_person_link, self._selected["id"], "photo",
+            (caption or "").strip(), dialog.selected["id"],
             on_done=self._on_updated, on_error=self._error,
         )
+
+    def _suggest_aliases(self) -> None:
+        if self.api.current_case_id is None:
+            QMessageBox.information(self, "בחר תיק", "בחר תיק ספציפי בדף Evidence תחילה.")
+            return
+        self.suggest_alias_button.setEnabled(False)
+        run_async(
+            self.api.suggest_aliases, self.api.current_case_id,
+            on_done=self._on_alias_suggestions, on_error=self._alias_error,
+        )
+
+    def _on_alias_suggestions(self, suggestions: list[dict[str, Any]]) -> None:
+        self.suggest_alias_button.setEnabled(True)
+        if not suggestions:
+            QMessageBox.information(
+                self, "אין הצעות",
+                "לא נמצאו כינויים או שמות נוספים המתאימים לאנשים שבתיק.",
+            )
+            return
+        accepted = 0
+        for s in suggestions:
+            pct = int(s["confidence"] * 100)
+            box = QMessageBox(self)
+            box.setWindowTitle("הצעת כינוי / שם נוסף")
+            box.setText(
+                f"נראה ש'{s['alias']}' הוא שם נוסף של '{s['person_name']}' "
+                f"({s.get('reason', '')}, ביטחון {pct}%).\n\nלהוסיף ככינוי?"
+            )
+            box.setStandardButtons(QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            box.button(QMessageBox.Yes).setText("הוסף")
+            box.button(QMessageBox.No).setText("דלג")
+            box.button(QMessageBox.Cancel).setText("עצור")
+            choice = box.exec()
+            if choice == QMessageBox.Cancel:
+                break
+            if choice == QMessageBox.Yes:
+                try:
+                    self.api.add_person_link(s["person_id"], "alias", s["alias"])
+                    accepted += 1
+                except Exception as exc:  # noqa: BLE001
+                    QMessageBox.critical(self, "שגיאה", str(exc))
+        if accepted:
+            self.refresh()
+        QMessageBox.information(self, "סיום", f"נוספו {accepted} כינויים.")
+
+    def _alias_error(self, message: str) -> None:
+        self.suggest_alias_button.setEnabled(True)
+        QMessageBox.critical(self, "שגיאה", message)
 
     def _remove_link(self) -> None:
         if not self._selected or not self._selected["links"]:
