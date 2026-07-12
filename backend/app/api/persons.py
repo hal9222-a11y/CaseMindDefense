@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from app.db import get_session
 from app.models.evidence import Case, Evidence, Person, PersonLink
 from app.services.audit_service import log_event
+from app.services.person_service import suggest_phone_links
 
 router = APIRouter(prefix="/persons", tags=["persons"])
 
@@ -54,6 +55,14 @@ def _person_dict(session: Session, person: Person) -> dict:
             for ln in links
         ],
     }
+
+
+@router.get("/suggest-phone-links")
+def suggest_phones(case_id: int = Query(...), session: Session = Depends(get_session)):
+    """The system's guess of which phone numbers belong to which people,
+    based on how close the number sits to a person's name/alias in the
+    text. Nothing is saved — accept a suggestion via POST /links."""
+    return suggest_phone_links(session, case_id)
 
 
 @router.get("")
