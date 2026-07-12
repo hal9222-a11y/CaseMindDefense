@@ -43,11 +43,13 @@ class PersonsPage(QWidget):
 
         self.new_button = QPushButton("New Person")
         self.new_ext_button = QPushButton("New (not in evidence)")
+        self.suggest_button = QPushButton("🔍 Suggest phone links")
         self.delete_button = QPushButton("Delete Person")
         self.delete_button.setStyleSheet("QPushButton { background: #b91c1c; }")
         self.refresh_button = QPushButton("Refresh")
         self.new_button.clicked.connect(lambda: self._create_person(True))
         self.new_ext_button.clicked.connect(lambda: self._create_person(False))
+        self.suggest_button.clicked.connect(self._suggest_phones)
         self.delete_button.clicked.connect(self._delete_person)
         self.refresh_button.clicked.connect(self.refresh)
 
@@ -56,6 +58,7 @@ class PersonsPage(QWidget):
         top.addStretch()
         top.addWidget(self.new_button)
         top.addWidget(self.new_ext_button)
+        top.addWidget(self.suggest_button)
         top.addWidget(self.delete_button)
         top.addWidget(self.refresh_button)
 
@@ -265,6 +268,57 @@ class PersonsPage(QWidget):
         link = self._selected["links"][labels.index(choice)]
         run_async(self.api.remove_person_link, self._selected["id"], link["id"],
                   on_done=self._on_updated, on_error=self._error)
+
+    def _suggest_phones(self) -> None:
+        if self.api.current_case_id is None:
+            QMessageBox.information(self, "בחר תיק", "בחר תיק ספציפי בדף Evidence תחילה.")
+            return
+        self.suggest_button.setEnabled(False)
+        run_async(
+            self.api.suggest_phone_links, self.api.current_case_id,
+            on_done=self._on_suggestions, on_error=self._suggest_error,
+        )
+
+    def _on_suggestions(self, suggestions: list[dict[str, Any]]) -> None:
+        self.suggest_button.setEnabled(True)
+        if not suggestions:
+            QMessageBox.information(
+                self, "אין הצעות",
+                "לא נמצאו מספרי טלפון סמוכים לשמות של אנשים בתיק.\n"
+                "טיפ: צור קודם את האנשים, ואז המערכת תנחש אילו טלפונים שייכים להם.",
+            )
+            return
+        accepted = 0
+        for s in suggestions:
+            pct = int(s["confidence"] * 100)
+            box = QMessageBox(self)
+            box.setWindowTitle("הצעת קישור טלפון")
+            box.setText(
+                f"נראה שהטלפון {s['phone']} שייך ל'{s['person_name']}' "
+                f"(ביטחון {pct}%).\n\n"
+                f"מתוך: {s.get('filename') or ''}\n"
+                f"הקשר: …{s.get('snippet', '')}…\n\nלקשר?"
+            )
+            box.setStandardButtons(QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            box.button(QMessageBox.Yes).setText("קשר")
+            box.button(QMessageBox.No).setText("דלג")
+            box.button(QMessageBox.Cancel).setText("עצור")
+            choice = box.exec()
+            if choice == QMessageBox.Cancel:
+                break
+            if choice == QMessageBox.Yes:
+                try:
+                    self.api.add_person_link(s["person_id"], "phone", s["phone"])
+                    accepted += 1
+                except Exception as exc:  # noqa: BLE001
+                    QMessageBox.critical(self, "שגיאה", str(exc))
+        if accepted:
+            self.refresh()
+        QMessageBox.information(self, "סיום", f"קושרו {accepted} מספרי טלפון.")
+
+    def _suggest_error(self, message: str) -> None:
+        self.suggest_button.setEnabled(True)
+        QMessageBox.critical(self, "שגיאה", message)
 
     def _on_updated(self, person: dict[str, Any]) -> None:
         # replace the person in the list and re-render without a full reload

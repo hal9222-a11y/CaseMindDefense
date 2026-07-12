@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Phone-to-person suggestions**: the Persons page can guess which phone
+  numbers belong to which people (a number sitting close to a person's
+  name/alias in the text), ranked by confidence. `GET /persons/
+  suggest-phone-links`; the desktop shows each guess to accept or skip.
+  Nothing is saved until you accept
+
 - **Persons ("who is who")**: a per-case people view. Each person has a
   name and a description of who they are, and can carry aliases/nicknames,
   phone numbers, photo links (to image evidence), and typed relations to
