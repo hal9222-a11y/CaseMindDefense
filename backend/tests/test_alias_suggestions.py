@@ -44,6 +44,28 @@ def test_suggests_token_and_prefix_aliases(tmp_path, monkeypatch):
         client.delete(f"/cases/{case_id}")
 
 
+def test_another_persons_name_is_not_suggested_as_alias(tmp_path, monkeypatch):
+    # 'דוד' is its own person; it must NOT be offered as an alias of 'דוד לוי'
+    monkeypatch.setattr(ner_service, "_load_ner", lambda: FakeNer())
+    with TestClient(app) as client:
+        marker = uuid.uuid4().hex[:8]
+        case_id = client.post("/cases", json={"name": f"Alias2 {marker}"}).json()["id"]
+        p = tmp_path / f"names_{marker}.txt"
+        p.write_text(f"דוד לוי ודוד נפגשו. דודי הגיע. {marker}", encoding="utf-8")
+        ev = client.post("/evidence/import-file", json={"path": str(p), "case_id": case_id}).json()
+        assert client.get(f"/evidence/{ev['id']}").json()["status"] == "indexed"
+
+        full = client.post("/persons", json={"case_id": case_id, "name": "דוד לוי"}).json()["id"]
+        client.post("/persons", json={"case_id": case_id, "name": "דוד"})  # a separate person
+
+        suggestions = client.get("/persons/suggest-aliases", params={"case_id": case_id}).json()
+        for_full = [s["alias"] for s in suggestions if s["person_id"] == full]
+        assert "דוד" not in for_full        # belongs to another person, not an alias
+        assert "דודי" in for_full           # still a valid nickname suggestion
+
+        client.delete(f"/cases/{case_id}")
+
+
 def test_no_persons_no_alias_suggestions():
     with TestClient(app) as client:
         case_id = client.post("/cases", json={"name": f"e {uuid.uuid4().hex[:6]}"}).json()["id"]
