@@ -86,3 +86,18 @@ def test_deleting_case_removes_its_persons(tmp_path):
         # the persons endpoint requires a case; the case is gone, so listing
         # by that id returns empty
         assert client.get("/persons", params={"case_id": case_id}).json() == []
+
+
+def test_person_graph_has_nodes_and_labelled_edges():
+    with TestClient(app) as client:
+        case_id = _case(client)
+        a = client.post("/persons", json={"case_id": case_id, "name": "אמיר"}).json()["id"]
+        b = client.post("/persons", json={"case_id": case_id, "name": "דוד",
+                                          "in_evidence": False}).json()["id"]
+        client.post(f"/persons/{a}/links", json={
+            "kind": "relation", "related_person_id": b, "value": "אח"})
+
+        g = client.get("/persons/graph", params={"case_id": case_id}).json()
+        assert {n["id"] for n in g["nodes"]} == {a, b}
+        assert any(n["id"] == b and n["in_evidence"] is False for n in g["nodes"])
+        assert g["edges"] == [{"a": a, "b": b, "label": "אח"}]

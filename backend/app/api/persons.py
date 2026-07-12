@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.db import get_session
 from app.models.evidence import Case, Evidence, Person, PersonLink
 from app.services.audit_service import log_event
-from app.services.person_service import suggest_alias_links, suggest_phone_links
+from app.services.person_service import person_graph, suggest_alias_links, suggest_phone_links
 
 router = APIRouter(prefix="/persons", tags=["persons"])
 
@@ -70,6 +70,12 @@ def suggest_aliases(case_id: int = Query(...), session: Session = Depends(get_se
     """Guess that a name in the evidence is a nickname/variant of an existing
     person (part of the full name, or a short prefix nickname)."""
     return suggest_alias_links(session, case_id)
+
+
+@router.get("/graph")
+def graph(case_id: int = Query(...), session: Session = Depends(get_session)):
+    """People as nodes and their relations as labelled edges (who-vs-who)."""
+    return person_graph(session, case_id)
 
 
 @router.get("")
