@@ -62,6 +62,12 @@ class DataPage(QWidget):
         self.refresh_button.setEnabled(False)
         run_async(self._fetch_fn, on_done=self._on_loaded, on_error=self._on_failed)
 
+    def reset(self) -> None:
+        """Drop cached rows and force a reload next time the page is shown
+        (used when the case scope changes)."""
+        self._loaded_once = False
+        self.table.set_rows([])
+
     def _on_loaded(self, rows: list[dict[str, Any]]) -> None:
         self.refresh_button.setEnabled(True)
         self.table.set_rows(rows)

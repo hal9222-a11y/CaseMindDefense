@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Case-scoped analysis**: search, semantic search, AI ask, timeline,
+  entities, entity graph and contradictions now respect the selected
+  case — one client's material no longer bleeds into another's views.
+  Selecting a case on the Evidence page scopes every analysis view; the
+  analysis endpoints take an optional `case_id` (default = all cases)
+
 - Audio/video evidence is transcribed locally (faster-whisper) in the
   background: wiretaps and interrogation videos become searchable with
   time-range citations (`time:MM:SS-MM:SS`); statuses `transcribed` /

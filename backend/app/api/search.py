@@ -7,9 +7,19 @@ from app.services.semantic_search_service import semantic_search
 router = APIRouter(prefix="/search", tags=["search"])
 
 @router.get("")
-def search(q: str, limit: int = 10, session: Session = Depends(get_session)):
-    return search_chunks(session, q, limit)
+def search(
+    q: str,
+    limit: int = 10,
+    case_id: int | None = Query(None),
+    session: Session = Depends(get_session),
+):
+    return search_chunks(session, q, limit, case_id=case_id)
 
 @router.get("/semantic")
-def semantic(q: str = Query(..., min_length=1), limit: int = Query(10, ge=1, le=50), session: Session = Depends(get_session)):
-    return semantic_search(session=session, query=q, limit=limit)
+def semantic(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(10, ge=1, le=50),
+    case_id: int | None = Query(None),
+    session: Session = Depends(get_session),
+):
+    return semantic_search(session=session, query=q, limit=limit, case_id=case_id)

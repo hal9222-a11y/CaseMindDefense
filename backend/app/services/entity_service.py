@@ -4,7 +4,7 @@ import re
 
 from sqlmodel import Session, select
 
-from app.models.evidence import EvidenceChunk
+from app.models.evidence import Evidence, EvidenceChunk
 
 
 LATIN_ENTITY_RE = re.compile(r"\b[A-Z][a-zA-Z]{2,}\b")
@@ -33,7 +33,7 @@ def _add(counts: dict[tuple[str, str], int], entity: str, entity_type: str) -> N
     counts[key] = counts.get(key, 0) + 1
 
 
-def list_entities(session: Session) -> list[dict]:
+def list_entities(session: Session, case_id: int | None = None) -> list[dict]:
     """Aggregates entities extracted at index time (see ner_service).
     Falls back to a legacy regex scan of chunks for evidence indexed
     before entity extraction existed."""
@@ -41,10 +41,14 @@ def list_entities(session: Session) -> list[dict]:
 
     from app.models.evidence import ExtractedEntity
 
-    rows = session.exec(
-        select(ExtractedEntity.text, ExtractedEntity.label, func.count())
-        .group_by(ExtractedEntity.text, ExtractedEntity.label)
-    ).all()
+    stmt = select(ExtractedEntity.text, ExtractedEntity.label, func.count())
+    if case_id is not None:
+        stmt = stmt.where(
+            ExtractedEntity.evidence_id.in_(
+                select(Evidence.id).where(Evidence.case_id == case_id)
+            )
+        )
+    rows = session.exec(stmt.group_by(ExtractedEntity.text, ExtractedEntity.label)).all()
 
     if rows:
         return [
@@ -52,10 +56,12 @@ def list_entities(session: Session) -> list[dict]:
             for text, label, count in sorted(rows, key=lambda r: (-r[2], r[0]))
         ]
 
-    return _legacy_regex_scan(session)
+    return _legacy_regex_scan(session) if case_id is None else []
 
 
-def entity_graph(session: Session, max_nodes: int = 30, max_edges: int = 200) -> dict:
+def entity_graph(
+    session: Session, max_nodes: int = 30, max_edges: int = 200, case_id: int | None = None
+) -> dict:
     """Co-occurrence graph: nodes are the top entities, an edge connects two
     entities that appear in the same evidence (weight = shared evidence count)."""
     from collections import Counter, defaultdict
@@ -63,9 +69,14 @@ def entity_graph(session: Session, max_nodes: int = 30, max_edges: int = 200) ->
 
     from app.models.evidence import ExtractedEntity
 
-    rows = session.exec(
-        select(ExtractedEntity.text, ExtractedEntity.label, ExtractedEntity.evidence_id)
-    ).all()
+    stmt = select(ExtractedEntity.text, ExtractedEntity.label, ExtractedEntity.evidence_id)
+    if case_id is not None:
+        stmt = stmt.where(
+            ExtractedEntity.evidence_id.in_(
+                select(Evidence.id).where(Evidence.case_id == case_id)
+            )
+        )
+    rows = session.exec(stmt).all()
 
     counts: Counter = Counter((text, label) for text, label, _ in rows)
     top = {key for key, _ in counts.most_common(max_nodes)}

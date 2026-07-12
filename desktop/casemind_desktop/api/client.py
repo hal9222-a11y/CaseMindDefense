@@ -16,9 +16,18 @@ class ApiClient:
         api_key = os.getenv("CASEMIND_API_KEY")
         if api_key:
             self._session.headers["X-API-Key"] = api_key
+        # the active case scope; analysis calls (search/timeline/entities/
+        # contradictions/graph/ask) inherit it so one case's material never
+        # bleeds into another's view. None = all cases.
+        self.current_case_id: int | None = None
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"
+
+    def _scoped(self, params: dict[str, Any]) -> dict[str, Any]:
+        if self.current_case_id is not None:
+            params = {**params, "case_id": self.current_case_id}
+        return params
 
     def health(self) -> dict[str, Any]:
         try:
@@ -103,7 +112,7 @@ class ApiClient:
     def entity_graph(self, max_nodes: int = 30) -> dict[str, Any]:
         response = self._session.get(
             self._url(endpoints.ENTITY_GRAPH),
-            params={"max_nodes": max_nodes},
+            params=self._scoped({"max_nodes": max_nodes}),
             timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()
@@ -120,7 +129,7 @@ class ApiClient:
     def semantic_search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         response = self._session.get(
             self._url(endpoints.SEMANTIC_SEARCH),
-            params={"q": query, "limit": limit},
+            params=self._scoped({"q": query, "limit": limit}),
             timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()
@@ -129,7 +138,7 @@ class ApiClient:
     def keyword_search(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         response = self._session.get(
             self._url(endpoints.SEARCH),
-            params={"q": query, "limit": limit},
+            params=self._scoped({"q": query, "limit": limit}),
             timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()
@@ -138,7 +147,7 @@ class ApiClient:
     def timeline(self, limit: int = 500) -> list[dict[str, Any]]:
         response = self._session.get(
             self._url(endpoints.TIMELINE),
-            params={"limit": limit},
+            params=self._scoped({"limit": limit}),
             timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()
@@ -147,7 +156,7 @@ class ApiClient:
     def entities(self, limit: int = 500) -> list[dict[str, Any]]:
         response = self._session.get(
             self._url(endpoints.ENTITIES),
-            params={"limit": limit},
+            params=self._scoped({"limit": limit}),
             timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()
@@ -157,6 +166,7 @@ class ApiClient:
         # LLM verdicts on candidate pairs take longer than normal calls
         response = self._session.get(
             self._url(endpoints.CONTRADICTIONS),
+            params=self._scoped({}),
             timeout=180,
         )
         response.raise_for_status()
@@ -177,9 +187,12 @@ class ApiClient:
         return response.json()
 
     def ask_ai(self, question: str, limit: int = 5) -> dict[str, Any]:
+        body: dict[str, Any] = {"question": question, "limit": limit}
+        if self.current_case_id is not None:
+            body["case_id"] = self.current_case_id
         response = self._session.post(
             self._url(endpoints.AI_ASK),
-            json={"question": question, "limit": limit},
+            json=body,
             timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()

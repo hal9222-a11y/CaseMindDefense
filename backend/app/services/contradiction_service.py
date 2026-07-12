@@ -23,17 +23,23 @@ def find_contradictions(
     session: Session,
     sim_threshold: float | None = None,
     max_llm_pairs: int | None = None,
+    case_id: int | None = None,
 ) -> list[dict]:
     """Semantically similar chunk pairs from different evidence, judged by
     the local LLM. Without an LLM, top pairs are returned as 'unverified'."""
+    from app.services.scope import case_evidence_ids
+
     threshold = SIM_THRESHOLD if sim_threshold is None else sim_threshold
     pairs_cap = MAX_LLM_PAIRS if max_llm_pairs is None else max_llm_pairs
 
+    allowed = case_evidence_ids(session, case_id)
     current_model = embedding_model_name()
     chunks = session.exec(select(EvidenceChunk).limit(MAX_CHUNKS)).all()
 
     embedded: list[tuple[EvidenceChunk, list[float]]] = []
     for chunk in chunks:
+        if allowed is not None and chunk.evidence_id not in allowed:
+            continue
         if chunk.embedding_model and chunk.embedding_model != current_model:
             continue
         vec = deserialize_embedding(chunk.embedding or "")

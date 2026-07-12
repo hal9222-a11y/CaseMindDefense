@@ -76,6 +76,11 @@ class GraphPage(QWidget):
         self.refresh_button.setEnabled(False)
         run_async(self.api.entity_graph, on_done=self._on_loaded, on_error=self._on_failed)
 
+    def reset(self) -> None:
+        """Force a reload next time shown (used when the case scope changes)."""
+        self._loaded_once = False
+        self.scene.clear()
+
     def _on_loaded(self, graph: dict) -> None:
         self.refresh_button.setEnabled(True)
         self._draw(graph)

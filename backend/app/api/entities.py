@@ -9,13 +9,15 @@ router = APIRouter(prefix="/entities", tags=["entities"])
 def entities(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
+    case_id: int | None = Query(None),
     session: Session = Depends(get_session),
 ):
-    return list_entities(session)[offset : offset + limit]
+    return list_entities(session, case_id=case_id)[offset : offset + limit]
 
 @router.get("/graph")
 def graph(
     max_nodes: int = Query(30, ge=2, le=100),
+    case_id: int | None = Query(None),
     session: Session = Depends(get_session),
 ):
-    return entity_graph(session, max_nodes=max_nodes)
+    return entity_graph(session, max_nodes=max_nodes, case_id=case_id)

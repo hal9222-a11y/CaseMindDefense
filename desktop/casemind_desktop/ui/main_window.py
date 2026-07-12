@@ -90,6 +90,9 @@ class MainWindow(QMainWindow):
         self.graph_page.entity_activated.connect(
             lambda entity: self._search_entity({"entity": entity})
         )
+        # changing the case scope on the Evidence page reloads the lazy
+        # analysis views so they refetch for the new case
+        self.evidence_page.case_scope_changed.connect(self._on_scope_changed)
 
         self.pages = QStackedWidget()
         self.pages.addWidget(DashboardPage(self.status.check_backend))
@@ -118,6 +121,12 @@ class MainWindow(QMainWindow):
 
         self.apply_dark_theme()
         self.status.check_backend()
+
+    def _on_scope_changed(self, _case_id: object) -> None:
+        for page in (self.timeline_page, self.entities_page,
+                     self.contradictions_page, self.graph_page):
+            page.reset()
+        # search/AI are user-triggered and will use the new scope on next run
 
     def _open_citation(self, result: dict) -> None:
         evidence_id = result.get("evidence_id")
