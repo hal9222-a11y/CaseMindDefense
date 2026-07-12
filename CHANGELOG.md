@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Delete a whole case when a matter is closed: `DELETE /cases/{id}`
+  removes the case and every piece of its evidence (files, chunks,
+  entities, index); a red "Delete Case" button on the Evidence toolbar
+  (enabled only for a selected case) with a strong confirmation dialog
+
 - **Case-scoped analysis**: search, semantic search, AI ask, timeline,
   entities, entity graph and contradictions now respect the selected
   case — one client's material no longer bleeds into another's views.

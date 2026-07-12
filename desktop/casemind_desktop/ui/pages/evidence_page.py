@@ -51,6 +51,7 @@ class EvidencePage(QWidget):
         self.toolbar.import_folder_clicked.connect(self._pick_and_import_folder)
         self.toolbar.delete_clicked.connect(self._delete_selected)
         self.toolbar.new_case_clicked.connect(self._create_case)
+        self.toolbar.delete_case_clicked.connect(self._delete_case)
         self.toolbar.report_clicked.connect(self._generate_report)
         self.toolbar.case_changed.connect(self._on_case_changed)
 
@@ -159,6 +160,44 @@ class EvidencePage(QWidget):
         self.api.current_case_id = case_id
         self.case_scope_changed.emit(case_id)
         self._refresh()
+
+    def _delete_case(self) -> None:
+        case_id = self.toolbar.current_case_id()
+        if case_id is None:
+            return
+        case_name = self.toolbar.case_selector.currentText()
+        count = self.table.rowCount()
+        confirm = QMessageBox.warning(
+            self,
+            "מחיקת תיק חקירה",
+            f"למחוק לצמיתות את התיק כולו?\n\n{case_name}\n\n"
+            f"כל הראיות בתיק ({count}) — הקבצים, האינדוקס והישויות — יימחקו. "
+            "הפעולה תירשם ביומן ואינה הפיכה. שקול ליצור גיבוי תחילה.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+        self.toolbar.set_busy(True)
+        run_async(
+            self.api.delete_case,
+            case_id,
+            on_done=lambda res: self._on_case_deleted(case_name, res),
+            on_error=lambda err: QMessageBox.critical(self, "מחיקת תיק נכשלה", err),
+        )
+
+    def _on_case_deleted(self, case_name: str, result: dict[str, Any]) -> None:
+        self.api.current_case_id = None
+        self.case_scope_changed.emit(None)
+        self.preview.clear()
+        self.inspector.clear()
+        self._load_cases()   # refreshes the case dropdown (dropped case gone)
+        self._refresh()      # reloads evidence (now All Cases)
+        QMessageBox.information(
+            self,
+            "התיק נמחק",
+            f"התיק '{case_name}' נמחק יחד עם {result.get('evidence_deleted', 0)} ראיות.",
+        )
 
     def _refresh(self) -> None:
         self.toolbar.set_busy(True)

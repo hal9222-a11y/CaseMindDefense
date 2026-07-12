@@ -4,15 +4,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from sqlmodel import delete as sql_delete
-
 from app.db import get_engine, get_session
-from app.models.evidence import Evidence, EvidenceChunk, ExtractedEntity
+from app.models.evidence import Evidence
 from app.services.audit_service import log_event
 from app.services.evidence_service import (
     SUPPORTED_EXTENSIONS,
     DuplicateEvidenceError,
     ImportPathNotAllowedError,
+    delete_evidence_record,
     index_evidence,
     register_evidence,
 )
@@ -143,21 +142,8 @@ def delete_evidence(evidence_id: int, session: Session = Depends(get_session)):
     if not ev:
         raise HTTPException(status_code=404, detail="evidence not found")
 
-    # chunk deletes go through the ORM so the FTS triggers fire per row
-    for chunk in session.exec(
-        select(EvidenceChunk).where(EvidenceChunk.evidence_id == evidence_id)
-    ).all():
-        session.delete(chunk)
-    session.exec(sql_delete(ExtractedEntity).where(ExtractedEntity.evidence_id == evidence_id))
-
-    stored = Path(ev.stored_path)
     filename = ev.filename
-    session.delete(ev)
-    session.commit()
-
-    if stored.exists():
-        stored.unlink()
-
+    delete_evidence_record(session, ev)
     log_event(session, "evidence_deleted", evidence_id=evidence_id, filename=filename)
     return {"deleted": evidence_id}
 
