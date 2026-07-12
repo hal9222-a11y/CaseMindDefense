@@ -106,6 +106,55 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    # --- persons ("who is who") ---
+    def list_persons(self, case_id: int) -> list[dict[str, Any]]:
+        response = self._session.get(
+            self._url(endpoints.PERSONS), params={"case_id": case_id}, timeout=REQUEST_TIMEOUT
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def create_person(self, case_id: int, name: str, description: str = "",
+                      in_evidence: bool = True) -> dict[str, Any]:
+        response = self._session.post(
+            self._url(endpoints.PERSONS),
+            json={"case_id": case_id, "name": name, "description": description,
+                  "in_evidence": in_evidence},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def delete_person(self, person_id: int) -> dict[str, Any]:
+        response = self._session.delete(
+            self._url(f"{endpoints.PERSONS}/{person_id}"), timeout=REQUEST_TIMEOUT
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def add_person_link(self, person_id: int, kind: str, value: str = "",
+                        evidence_id: int | None = None,
+                        related_person_id: int | None = None) -> dict[str, Any]:
+        body: dict[str, Any] = {"kind": kind, "value": value}
+        if evidence_id is not None:
+            body["evidence_id"] = evidence_id
+        if related_person_id is not None:
+            body["related_person_id"] = related_person_id
+        response = self._session.post(
+            self._url(f"{endpoints.PERSONS}/{person_id}/links"),
+            json=body, timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def remove_person_link(self, person_id: int, link_id: int) -> dict[str, Any]:
+        response = self._session.delete(
+            self._url(f"{endpoints.PERSONS}/{person_id}/links/{link_id}"),
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def generate_report(self, case_id: int | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {}
         if case_id is not None:

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Persons ("who is who")**: a per-case people view. Each person has a
+  name and a description of who they are, and can carry aliases/nicknames,
+  phone numbers, photo links (to image evidence), and typed relations to
+  other people (e.g. brother, father of, close friend). People who don't
+  appear in the materials can be added manually. `/persons` CRUD + links;
+  a Persons page in the sidebar. Deleting a person or a case removes their
+  people and links
+
 - Delete a whole case when a matter is closed: `DELETE /cases/{id}`
   removes the case and every piece of its evidence (files, chunks,
   entities, index); a red "Delete Case" button on the Evidence toolbar

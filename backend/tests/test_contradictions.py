@@ -10,12 +10,18 @@ from app.services.contradiction_service import find_contradictions
 
 
 def _import_pair(client, tmp_path, marker):
+    """Import a contradicting witness pair into a fresh case; return case_id.
+    Scoping find_contradictions to this case isolates the test from any other
+    evidence in the shared DB (the pre-existing flake)."""
+    case_id = client.post("/cases", json={"name": f"Contra {marker}"}).json()["id"]
     a = tmp_path / f"witness_a_{marker}.txt"
     a.write_text(f"העד ראה רכב לבן ליד הבית בשעה שמונה בערב {marker}", encoding="utf-8")
     b = tmp_path / f"witness_b_{marker}.txt"
     b.write_text(f"העד ראה רכב שחור ליד הבית בשעה שמונה בערב {marker}", encoding="utf-8")
     for p in (a, b):
-        assert client.post("/evidence/import-file", json={"path": str(p)}).status_code == 200
+        r = client.post("/evidence/import-file", json={"path": str(p), "case_id": case_id})
+        assert r.status_code == 200
+    return case_id
 
 
 def test_contradiction_detected_with_llm_verdict(tmp_path, monkeypatch):
@@ -27,11 +33,11 @@ def test_contradiction_detected_with_llm_verdict(tmp_path, monkeypatch):
     )
     with TestClient(app) as client:
         marker = uuid.uuid4().hex
-        _import_pair(client, tmp_path, marker)
+        case_id = _import_pair(client, tmp_path, marker)
 
     with Session(get_engine()) as session:
         # low threshold so the hash-fallback embeddings used in CI also pair
-        results = find_contradictions(session, sim_threshold=0.3, max_llm_pairs=5)
+        results = find_contradictions(session, sim_threshold=0.3, max_llm_pairs=5, case_id=case_id)
 
     ours = [r for r in results if marker in (r["text_a"] + r["text_b"])]
     assert ours, f"no contradiction found among {len(results)} results"
@@ -48,10 +54,10 @@ def test_consistent_pairs_are_dropped(tmp_path, monkeypatch):
     )
     with TestClient(app) as client:
         marker = uuid.uuid4().hex
-        _import_pair(client, tmp_path, marker)
+        case_id = _import_pair(client, tmp_path, marker)
 
     with Session(get_engine()) as session:
-        results = find_contradictions(session, sim_threshold=0.3, max_llm_pairs=5)
+        results = find_contradictions(session, sim_threshold=0.3, max_llm_pairs=5, case_id=case_id)
     assert not [r for r in results if marker in (r["text_a"] + r["text_b"])]
 
 
@@ -59,10 +65,10 @@ def test_no_llm_returns_unverified_candidates(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_service, "ollama_available", lambda: False)
     with TestClient(app) as client:
         marker = uuid.uuid4().hex
-        _import_pair(client, tmp_path, marker)
+        case_id = _import_pair(client, tmp_path, marker)
 
     with Session(get_engine()) as session:
-        results = find_contradictions(session, sim_threshold=0.3, max_llm_pairs=5)
+        results = find_contradictions(session, sim_threshold=0.3, max_llm_pairs=5, case_id=case_id)
     ours = [r for r in results if marker in (r["text_a"] + r["text_b"])]
     assert ours and ours[0]["verdict"] == "unverified"
 

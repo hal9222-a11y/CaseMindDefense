@@ -13,6 +13,7 @@ from ui.pages.dashboard_page import DashboardPage
 from ui.pages.data_page import DataPage
 from ui.pages.evidence_page import EvidencePage
 from ui.pages.graph_page import GraphPage
+from ui.pages.persons_page import PersonsPage
 from ui.pages.search_page import SearchPage
 from ui.pages.settings_page import SettingsPage
 from ui.widgets.status_bar_widget import StatusBarWidget
@@ -37,6 +38,7 @@ class MainWindow(QMainWindow):
                 "AI Workspace",
                 "Timeline",
                 "Entities",
+                "Persons",
                 "Contradictions",
                 "Entity Graph",
                 "Settings",
@@ -81,6 +83,7 @@ class MainWindow(QMainWindow):
         )
 
         self.graph_page = GraphPage(self.api)
+        self.persons_page = PersonsPage(self.api)
 
         self.search_page.results.result_selected.connect(self._open_citation)
         self.ai_page.citations.result_selected.connect(self._open_citation)
@@ -101,6 +104,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.ai_page)
         self.pages.addWidget(self.timeline_page)
         self.pages.addWidget(self.entities_page)
+        self.pages.addWidget(self.persons_page)
         self.pages.addWidget(self.contradictions_page)
         self.pages.addWidget(self.graph_page)
         self.pages.addWidget(SettingsPage(self.api))
@@ -123,7 +127,7 @@ class MainWindow(QMainWindow):
         self.status.check_backend()
 
     def _on_scope_changed(self, _case_id: object) -> None:
-        for page in (self.timeline_page, self.entities_page,
+        for page in (self.timeline_page, self.entities_page, self.persons_page,
                      self.contradictions_page, self.graph_page):
             page.reset()
         # search/AI are user-triggered and will use the new scope on next run

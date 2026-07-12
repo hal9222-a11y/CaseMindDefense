@@ -47,6 +47,35 @@ class ExtractedEntity(SQLModel, table=True):
     label: str = Field(index=True)
 
 
+class Person(SQLModel, table=True):
+    """A human in the case — the "who". Belongs to one case. May or may not
+    appear in the investigation materials (in_evidence); the user can add
+    people who don't (e.g. a suspect's brother) and describe who they are."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    case_id: int = Field(foreign_key="case.id", index=True)
+    name: str = Field(index=True)
+    description: str = ""          # who they are / role, free text
+    in_evidence: bool = True       # False = added manually, not in the materials
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class PersonLink(SQLModel, table=True):
+    """Anything attached to a person. kind:
+      alias     - a name/nickname that refers to this person (value)
+      phone     - a phone number (value)
+      photo     - an image evidence (evidence_id, value = optional caption)
+      relation  - a tie to another person (related_person_id, value = type
+                  e.g. 'אח', 'אבא של', 'חבר קרוב')"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    person_id: int = Field(foreign_key="person.id", index=True)
+    kind: str = Field(index=True)
+    value: str = ""
+    evidence_id: Optional[int] = Field(default=None, foreign_key="evidence.id")
+    related_person_id: Optional[int] = Field(default=None, foreign_key="person.id")
+    confidence: float = 1.0        # < 1.0 = system suggestion pending confirm (ב2)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class AuditEvent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     event_type: str = Field(index=True)

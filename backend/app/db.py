@@ -87,7 +87,14 @@ def _init_fts(engine) -> None:
 
 
 def init_db() -> None:
-    from app.models.evidence import AuditEvent, Case, Evidence, EvidenceChunk  # noqa
+    from app.models.evidence import (  # noqa
+        AuditEvent,
+        Case,
+        Evidence,
+        EvidenceChunk,
+        Person,
+        PersonLink,
+    )
 
     engine = get_engine()
     _migrate_columns(engine)
