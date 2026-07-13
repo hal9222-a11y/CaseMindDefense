@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Truly offline model loading (fixes 15s read timeouts)**: the ML models
+  (embeddings, Whisper, NER) no longer phone home to HuggingFace to
+  revalidate their cache on every load — ~30 network round-trips that made
+  the first search/AI request network-bound and could exceed the desktop's
+  15s timeout. `HF_HUB_OFFLINE`/`TRANSFORMERS_OFFLINE` now default on (load
+  straight from cache), and the embedding model is warmed in the background
+  at startup so the first semantic search costs ~0.3s instead of ~10s
+
 - **Live activity indicator**: the desktop status bar now polls
   `GET /status` every few seconds and shows what the system is doing —
   "🟢 המערכת מוכנה" when idle or "⚙️ מעבד N קבצים ברקע…" while background
