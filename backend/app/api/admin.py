@@ -5,7 +5,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlmodel import Session, select
 
 from app.core.settings import get_settings
@@ -21,6 +21,19 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 def verify_audit(session: Session = Depends(get_session)):
     """Audit-log tamper detection: recomputes the event hash chain."""
     return verify_audit_chain(session)
+
+
+@router.post("/reindex-pending")
+def reindex_pending(background: BackgroundTasks, session: Session = Depends(get_session)):
+    """Re-queue every evidence stuck in 'processing' (orphaned by a crash or
+    a killed background task). Runs sequentially in the background."""
+    from app.services.evidence_service import resume_pending_indexing
+
+    pending = session.exec(
+        select(Evidence.id).where(Evidence.status == "processing")
+    ).all()
+    background.add_task(resume_pending_indexing)
+    return {"pending": len(pending), "status": "reindexing started"}
 
 
 @router.post("/verify-evidence")

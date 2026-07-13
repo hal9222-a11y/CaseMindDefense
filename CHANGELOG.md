@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Indexing resumes after a crash/restart**: evidence left in
+  'processing' by a killed or interrupted background task is now
+  re-indexed automatically on startup, and on demand via
+  `POST /admin/reindex-pending`. Previously a restart mid-batch orphaned
+  those files forever
+
 - **People relationship graph**: the Entity Graph page has a mode toggle
   — Entities (co-occurrence) or People (relations). People mode draws each
   person as a node with their explicit relations as labelled edges
