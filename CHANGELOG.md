@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **AI Ask no longer times out at 15s**: the desktop gave up on `POST /ai/ask`
+  after 15s while the backend was still generating (its LLM ceiling is 120s),
+  so answers that took longer failed with "read timeout=15". The desktop now
+  waits up to 180s for the AI answer, matching the other LLM-backed call
+  (contradictions)
+
 - **Truly offline model loading (fixes 15s read timeouts)**: the ML models
   (embeddings, Whisper, NER) no longer phone home to HuggingFace to
   revalidate their cache on every load — ~30 network round-trips that made
