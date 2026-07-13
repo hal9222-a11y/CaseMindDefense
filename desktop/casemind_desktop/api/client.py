@@ -37,6 +37,14 @@ class ApiClient:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
+    def status(self) -> dict[str, Any]:
+        try:
+            response = self._session.get(self._url("/status"), timeout=8)
+            response.raise_for_status()
+            return response.json()
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
     def list_evidence(self, case_id: int | None = None) -> list[dict[str, Any]]:
         params: dict[str, Any] = {}
         if case_id is not None:

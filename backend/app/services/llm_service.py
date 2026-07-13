@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 
@@ -28,13 +29,23 @@ Hard rules:
 HEBREW_RE = re.compile("[֐-׿]")
 
 
+_AVAIL_TTL = 15.0  # seconds; the status bar polls often, don't hammer Ollama
+_avail_cache: dict[str, float | bool] = {"ts": 0.0, "value": False}
+
+
 def ollama_available() -> bool:
+    now = time.monotonic()
+    if now - float(_avail_cache["ts"]) < _AVAIL_TTL:
+        return bool(_avail_cache["value"])
     try:
         with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=2) as resp:
             models = json.load(resp).get("models", [])
-        return any(m.get("name", "").startswith(LLM_MODEL.split(":")[0]) for m in models)
+        value = any(m.get("name", "").startswith(LLM_MODEL.split(":")[0]) for m in models)
     except Exception:
-        return False
+        value = False
+    _avail_cache["ts"] = now
+    _avail_cache["value"] = value
+    return value
 
 
 def synthesize_answer(question: str, citations: list[dict]) -> str | None:
