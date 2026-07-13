@@ -41,13 +41,17 @@ def transcribe_to_chunks(path: Path) -> list[dict] | None:
     Returns None when Whisper is unavailable; [] when there is no speech."""
     model = _load_whisper()
     if model is None:
-        return None
+        return None  # whisper not installed — a system-level issue
 
     try:
         segments, info = model.transcribe(str(path), vad_filter=True)
     except Exception as exc:
-        logger.warning("transcription failed for %s: %s", path.name, exc)
-        return None
+        # this file couldn't be transcribed (e.g. a video with no audio
+        # track raises IndexError inside faster-whisper). That's not a
+        # system problem, so return [] -> 'no_text_found', not None ->
+        # 'transcription_unavailable'
+        logger.warning("no transcribable audio in %s: %s", path.name, exc)
+        return []
 
     logger.info("transcribing %s (language=%s)", path.name, info.language)
 

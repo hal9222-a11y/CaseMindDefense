@@ -47,6 +47,21 @@ def test_media_without_whisper_gets_clear_status(tmp_path, monkeypatch):
         assert final["status"] == "transcription_unavailable"
 
 
+def test_untranscribable_media_returns_empty_not_none(monkeypatch):
+    # whisper is available but the file has no usable audio -> [] (caller
+    # maps to no_text_found), not None (transcription_unavailable)
+    from app.services import transcription_service
+
+    class Boom:
+        def transcribe(self, *a, **k):
+            raise IndexError("tuple index out of range")  # no-audio signature
+
+    monkeypatch.setattr(transcription_service, "_load_whisper", lambda: Boom())
+    from pathlib import Path
+
+    assert transcription_service.transcribe_to_chunks(Path("x.mp4")) == []
+
+
 def test_silent_media_marked_no_text(tmp_path, monkeypatch):
     monkeypatch.setattr(evidence_service, "transcribe_to_chunks", lambda path: [])
     with TestClient(app) as client:
