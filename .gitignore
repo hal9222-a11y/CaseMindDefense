@@ -12,6 +12,12 @@ desktop/.venv/
 *.db
 *.sqlite
 *.sqlite3
+# SQLite WAL sidecars (not matched by *.db)
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
 
 # Project Data
 data/
