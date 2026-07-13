@@ -168,6 +168,41 @@ def import_file(session: Session, source_path: str, case_id: int | None = None) 
     return index_evidence(session, evidence.id)
 
 
+def resume_pending_indexing() -> int:
+    """Re-index every evidence stuck in 'processing'. Background indexing runs
+    as one task per folder-import; if the process restarts or the task dies
+    mid-batch, those items are orphaned forever. Called on startup (in a
+    thread) and by the admin endpoint. Runs sequentially — the models are
+    process-global and not safe under concurrent inference. Returns the count
+    processed."""
+    import logging
+
+    from app.db import get_engine
+
+    logger = logging.getLogger("app.resume")
+    with Session(get_engine()) as session:
+        pending = list(session.exec(select(Evidence.id).where(Evidence.status == "processing")).all())
+    if not pending:
+        return 0
+    logger.warning("resuming %d evidence stuck in 'processing'", len(pending))
+
+    done = 0
+    with Session(get_engine()) as session:
+        for evidence_id in pending:
+            try:
+                index_evidence(session, evidence_id)
+                done += 1
+            except Exception:
+                logger.exception("resume-index failed for evidence %s", evidence_id)
+                ev = session.get(Evidence, evidence_id)
+                if ev is not None:
+                    ev.status = "text_extraction_failed"
+                    session.add(ev)
+                    session.commit()
+    logger.warning("resume complete: %d/%d indexed", done, len(pending))
+    return done
+
+
 def delete_evidence_record(session: Session, evidence: Evidence) -> None:
     """Remove an evidence row and everything derived from it: chunks (via the
     ORM so the FTS delete triggers fire), extracted entities, and the stored

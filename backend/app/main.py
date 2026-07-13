@@ -33,6 +33,13 @@ async def lifespan(app: FastAPI):
     _setup_file_logging()
     init_db()
     logging.getLogger(__name__).info("CaseMind backend started")
+    # resume any evidence orphaned in 'processing' by a prior crash/restart,
+    # off the main thread so startup (and /health) is not blocked
+    import threading
+
+    from app.services.evidence_service import resume_pending_indexing
+
+    threading.Thread(target=resume_pending_indexing, daemon=True).start()
     yield
 
 app = FastAPI(title="CaseMind Defense API", version="0.15-alpha", lifespan=lifespan)
