@@ -79,7 +79,22 @@ def synthesize_answer(question: str, citations: list[dict]) -> str | None:
     ])
     if content is None:
         return None
-    return _clean_answer(content, len(citations)) or None
+    cleaned = _clean_answer(content, len(citations))
+    # small models sometimes emit only citation markers ("[3]") with no prose;
+    # that's not an answer — signal failure so the caller shows citations-only
+    if not _has_prose(cleaned):
+        return None
+    return cleaned
+
+
+_WORD_RE = re.compile(r"[^\W\d_]", re.UNICODE)  # any letter (incl. Hebrew), not digit/punct
+
+
+def _has_prose(answer: str) -> bool:
+    """True if the answer contains real words, not just citation markers /
+    punctuation. Strip [n] markers first, then require at least one letter."""
+    without_citations = re.sub(r"\[\d+\]", "", answer or "")
+    return bool(_WORD_RE.search(without_citations))
 
 
 def _chat(messages: list[dict]) -> str | None:

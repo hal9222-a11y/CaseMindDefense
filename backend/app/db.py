@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from sqlalchemy import event
 from sqlmodel import SQLModel, Session, create_engine
 
 from app.core.settings import Settings
@@ -9,10 +10,28 @@ from app.core.settings import Settings
 def get_engine():
     settings = Settings()
 
-    return create_engine(
+    engine = create_engine(
         settings.database_url,
         connect_args={"check_same_thread": False},
     )
+
+    # This app runs many concurrent SQLite connections — request handlers, the
+    # background indexer, the startup resume daemon, the 4s /status poll. In the
+    # default rollback-journal mode with busy_timeout=0, any lock contention
+    # raises "database is locked" (a 500) instantly. WAL lets readers run
+    # alongside the single writer, and busy_timeout makes a contended write wait
+    # instead of failing. WAL is persistent and the backup uses the sqlite
+    # backup API, so snapshots stay consistent.
+    if settings.database_url.startswith("sqlite"):
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragmas(dbapi_conn, _record):  # pragma: no cover - driver hook
+            cur = dbapi_conn.cursor()
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA synchronous=NORMAL")
+            cur.execute("PRAGMA busy_timeout=30000")
+            cur.close()
+
+    return engine
 
 
 def reset_engine_cache() -> None:

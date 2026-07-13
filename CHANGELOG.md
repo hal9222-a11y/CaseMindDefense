@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Fewer intermittent "database is locked" 500s**: SQLite now runs in WAL
+  mode with a 30s busy timeout. The app has many concurrent connections
+  (request handlers, background indexer, startup resume, the 4s status poll);
+  in the old rollback-journal mode any lock contention failed instantly with a
+  500. WAL lets readers run alongside the writer, and the busy timeout makes a
+  contended write wait instead of erroring
+
+- **AI answers that are only citation markers now show the evidence**: a small
+  model sometimes replied "[3]" with no prose. That is treated as a failed
+  synthesis, so the answer falls back to citations-only mode (showing the
+  actual cited text) instead of a useless bare marker
+
 - **AI Ask no longer times out at 15s**: the desktop gave up on `POST /ai/ask`
   after 15s while the backend was still generating (its LLM ceiling is 120s),
   so answers that took longer failed with "read timeout=15". The desktop now
