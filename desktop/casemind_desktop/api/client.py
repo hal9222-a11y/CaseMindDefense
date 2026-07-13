@@ -278,10 +278,12 @@ class ApiClient:
         body: dict[str, Any] = {"question": question, "limit": limit}
         if self.current_case_id is not None:
             body["case_id"] = self.current_case_id
+        # the LLM synthesis (Ollama) runs up to the backend's 120s ceiling —
+        # the default 15s gave up mid-generation; allow more than the backend
         response = self._session.post(
             self._url(endpoints.AI_ASK),
             json=body,
-            timeout=REQUEST_TIMEOUT,
+            timeout=180,
         )
         response.raise_for_status()
         return response.json()
