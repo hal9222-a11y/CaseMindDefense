@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from app.core.security import require_api_key
 from app.core.settings import get_settings
 from app.db import init_db
-from app.api import health, evidence, search, audit, entities, timeline, contradictions, ai, cases, reports, admin, persons
+from app.api import health, evidence, search, audit, entities, timeline, contradictions, ai, cases, reports, admin, persons, status
 
 
 def _setup_file_logging() -> None:
@@ -71,3 +71,4 @@ app.include_router(cases.router, dependencies=protected)
 app.include_router(reports.router, dependencies=protected)
 app.include_router(admin.router, dependencies=protected)
 app.include_router(persons.router, dependencies=protected)
+app.include_router(status.router, dependencies=protected)

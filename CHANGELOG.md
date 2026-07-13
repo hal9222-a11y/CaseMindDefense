@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Live activity indicator**: the desktop status bar now polls
+  `GET /status` every few seconds and shows what the system is doing —
+  "🟢 המערכת מוכנה" when idle or "⚙️ מעבד N קבצים ברקע…" while background
+  OCR/transcription/indexing runs — plus the evidence count and whether the
+  AI is available. So the user can always see the system is working
+
 - **Indexing resumes after a crash/restart**: evidence left in
   'processing' by a killed or interrupted background task is now
   re-indexed automatically on startup, and on demand via
