@@ -11,3 +11,13 @@ httpx
 pytest
 sentence-transformers
 pydantic
+
+# Russian NER: the Hebrew model cannot read Russian, and 'every capitalised
+# word is a name' made Она/Это/Нет the top three people in a real case.
+natasha==1.6.0
+pymorphy3==2.0.6          # merges Russian declensions: Юля/Юлю/Юле are one person
+setuptools               # pymorphy2 (a natasha dep) still imports pkg_resources
+
+# Phone numbers: validated and international. The old regex was Israel-only,
+# so the +7 (Russia) and +375 (Belarus) numbers in the case were never seen.
+phonenumbers==9.0.34

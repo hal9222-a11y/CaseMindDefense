@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 from app.core.settings import get_settings
 from app.models.evidence import Evidence, EvidenceChunk, ExtractedEntity
 from app.services.audit_service import log_event
+from app.services.chat_service import chunk_by_messages, is_chat_export
 from app.services.embedding_service import embed_text, embedding_model_name, serialize_embedding
 from app.services.hash_service import sha256_file
 from app.services.ner_service import extract_entities
@@ -118,7 +119,16 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
             session.refresh(evidence)
             log_event(session, "text_extraction_failed", evidence_id=evidence.id, error=str(exc))
             return evidence
-        chunks = chunk_text_with_offsets(text)
+        # A WhatsApp export is a conversation, not a wall of text. Chunking it
+        # on message boundaries keeps citations whole, and — far more important
+        # — lets us record WHO SPOKE in each passage. The participants are the
+        # people the case is actually about, and they were never extracted.
+        if is_chat_export(text):
+            chunks = chunk_by_messages(text)
+            extraction_method = "chat"
+        else:
+            chunks = chunk_text_with_offsets(text)
+
     for idx, chunk_data in enumerate(chunks):
         chunk_text = chunk_data.get("text") or ""
         if not chunk_text.strip():
@@ -135,7 +145,21 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
         )
         session.add(ev_chunk)
 
-        for entity in extract_entities(chunk_text):
+        found = extract_entities(chunk_text)
+
+        # The people who sent the messages in this passage. Recording them makes
+        # the conversation participants first-class people, and because both
+        # sides of a chat appear in the same passage, the graph then shows who
+        # actually talks to whom.
+        for speaker in chunk_data.get("speakers", []):
+            found.append({"text": speaker, "label": "person"})
+
+        seen: set[tuple[str, str]] = set()
+        for entity in found:
+            key = (entity["text"], entity["label"])
+            if key in seen:
+                continue
+            seen.add(key)
             session.add(
                 ExtractedEntity(
                     evidence_id=evidence.id,

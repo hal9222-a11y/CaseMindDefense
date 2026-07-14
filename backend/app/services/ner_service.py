@@ -10,10 +10,12 @@ from app.services.entity_service import (
     HEBREW_TOKEN_RE,
     ISRAELI_ID_RE,
     LATIN_ENTITY_RE,
-    PHONE_RE,
     VEHICLE_PLATE_RE,
+    extract_phones,
     is_noise_name,
+    mask_phones,
 )
+from app.services.russian_ner import extract_russian_entities
 
 logger = logging.getLogger(__name__)
 
@@ -70,18 +72,30 @@ def extract_entities(text: str) -> list[dict]:
         except Exception as exc:
             logger.warning("NER inference failed on chunk: %s", exc)
 
-    # Cyrillic names always via regex: the Hebrew NER model does not cover
-    # Russian. Capitalisation alone is not enough — it also starts every
-    # sentence — so drop the pronouns/particles it sweeps up.
-    for entity in CYRILLIC_ENTITY_RE.findall(text):
-        if not is_noise_name(entity):
-            entities.append({"text": entity, "label": "name"})
+    # Russian: a real NER model, not "every capitalised word is a name". The
+    # regex is a fallback for a missing model ONLY — an empty result from the
+    # model is an answer, and falling back on it would put the noise back.
+    russian = extract_russian_entities(text)
+    if russian is None:
+        for entity in CYRILLIC_ENTITY_RE.findall(text):
+            if not is_noise_name(entity):
+                entities.append({"text": entity, "label": "name"})
+    else:
+        entities.extend(russian)
 
-    for phone in PHONE_RE.findall(text):
-        entities.append({"text": phone.strip(), "label": "phone"})
-    for israeli_id in ISRAELI_ID_RE.findall(text):
+    # Phones via libphonenumber: it validates the number and understands other
+    # countries. The old pattern was Israel-only, so the Russian (+7) and
+    # Belarusian (+375) numbers in this material were invisible.
+    for phone in extract_phones(text):
+        entities.append({"text": phone, "label": "phone"})
+
+    # The ID and plate patterns are just runs of digits, so they happily match
+    # *inside* a phone number ("052-465-7474" also yielded the "plate" 465-7474)
+    # and inside dates in filenames. Blank out what is already a phone first.
+    remaining = mask_phones(text)
+    for israeli_id in ISRAELI_ID_RE.findall(remaining):
         entities.append({"text": israeli_id, "label": "israeli_id"})
-    for plate in VEHICLE_PLATE_RE.findall(text):
+    for plate in VEHICLE_PLATE_RE.findall(remaining):
         entities.append({"text": plate, "label": "vehicle_plate"})
 
     if ner is None:

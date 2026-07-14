@@ -19,9 +19,10 @@ def test_cyrillic_entities_extracted(tmp_path, monkeypatch):
         assert client.post("/evidence/import-file", json={"path": str(p)}).status_code == 200
 
         entities = client.get("/entities", params={"limit": 500}).json()
-        names = {e["entity"] for e in entities if e["type"] == "name"}
-        assert "Владимир" in names
-        assert "Петров" in names
+        # real NER returns the whole person, not two capitalised fragments,
+        # and labels them "person" rather than a generic "name"
+        names = {e["entity"] for e in entities if e["type"] == "person"}
+        assert "Владимир Петров" in names
 
 
 def test_ocr_langs_never_requests_missing_pack():

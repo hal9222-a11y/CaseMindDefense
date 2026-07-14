@@ -23,6 +23,31 @@ def verify_audit(session: Session = Depends(get_session)):
     return verify_audit_chain(session)
 
 
+@router.post("/reindex-all")
+def reindex_all(background: BackgroundTasks, session: Session = Depends(get_session)):
+    """Re-run the whole analysis over material that is already imported.
+
+    Needed when the analysis itself changes — extracting the conversation
+    participants, real Russian NER, validated phone numbers. Evidence indexed by
+    the older pipeline keeps its old (worse) entities until it is re-read.
+
+    Marks everything as pending and lets the existing sequential background
+    indexer work through it, so the app stays usable while it runs.
+    """
+    from app.services.evidence_service import resume_pending_indexing
+
+    evidence = session.exec(
+        select(Evidence).where(Evidence.status.not_in(("processing", "imported")))
+    ).all()
+    for item in evidence:
+        item.status = "processing"
+        session.add(item)
+    session.commit()
+
+    background.add_task(resume_pending_indexing)
+    return {"queued": len(evidence), "status": "reindexing started"}
+
+
 @router.post("/reindex-pending")
 def reindex_pending(background: BackgroundTasks, session: Session = Depends(get_session)):
     """Re-queue every evidence stuck in 'processing' (orphaned by a crash or

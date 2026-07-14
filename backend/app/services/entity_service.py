@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 
 from sqlmodel import Session, select
@@ -12,7 +13,52 @@ CYRILLIC_ENTITY_RE = re.compile(r"\b[А-ЯЁ][а-яё]{2,}\b")
 HEBREW_TOKEN_RE = re.compile(r"[\u0590-\u05FF]{2,}")
 # (?<!\d) instead of \b: there is no word boundary between a space and "+",
 # so \b(?:\+972...) can never match international numbers
+# Kept for the fallback path and for locating a number's position in the text.
 PHONE_RE = re.compile(r"(?<!\d)(?:\+972|0)(?:[-\s]?\d){8,10}\b")
+
+DEFAULT_PHONE_REGION = os.getenv("CASEMIND_PHONE_REGION", "IL")
+
+
+def extract_phones(text: str) -> list[str]:
+    """Phone numbers via libphonenumber: validated, and not Israel-only.
+
+    The regex above only matches Israeli numbers, so the Russian (+7),
+    Belarusian (+375) and Spanish (+34) numbers in this case were never seen at
+    all — and it happily accepted any 9-11 digit run beginning with 0, which is
+    also what a date or an ID looks like. Numbers are returned in E.164 so the
+    same phone written three ways is one phone.
+    """
+    try:
+        import phonenumbers
+    except ImportError:  # pragma: no cover - fallback when the lib is absent
+        return [p.strip() for p in PHONE_RE.findall(text or "")]
+
+    found: list[str] = []
+    seen: set[str] = set()
+    for match in phonenumbers.PhoneNumberMatcher(text or "", DEFAULT_PHONE_REGION):
+        e164 = phonenumbers.format_number(
+            match.number, phonenumbers.PhoneNumberFormat.E164
+        )
+        if e164 not in seen:
+            seen.add(e164)
+            found.append(e164)
+    return found
+
+
+def mask_phones(text: str) -> str:
+    """Blank out phone numbers so the ID and plate patterns — which are just runs
+    of digits — cannot match a fragment of one. '052-465-7474' was also being
+    reported as the vehicle plate '465-7474'."""
+    try:
+        import phonenumbers
+    except ImportError:  # pragma: no cover
+        return PHONE_RE.sub(lambda m: " " * len(m.group(0)), text or "")
+
+    masked = list(text or "")
+    for match in phonenumbers.PhoneNumberMatcher(text or "", DEFAULT_PHONE_REGION):
+        for i in range(match.start, match.end):
+            masked[i] = " "
+    return "".join(masked)
 ISRAELI_ID_RE = re.compile(r"\b\d{9}\b")
 VEHICLE_PLATE_RE = re.compile(r"\b\d{2,3}[-\s]?\d{2,3}[-\s]?\d{2,3}\b")
 

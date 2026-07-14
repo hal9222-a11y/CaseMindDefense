@@ -20,7 +20,7 @@ def test_russian_pronouns_are_not_names():
 
 def test_extraction_keeps_names_drops_noise():
     text = "Она сказала, что Марина встретила Дмитрия. Хорошо. Алиса тоже была там."
-    names = {e["text"] for e in extract_entities(text) if e["label"] == "name"}
+    names = {e["text"] for e in extract_entities(text) if e["label"] == "person"}
     assert {"Марина", "Алиса"} <= names
     assert not ({"Она", "Хорошо"} & names)
 
