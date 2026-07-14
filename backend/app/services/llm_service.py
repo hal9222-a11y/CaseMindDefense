@@ -104,26 +104,64 @@ def ollama_available() -> bool:
     return active_model() is not None
 
 
+# A whole WhatsApp export is far past any local model's context window, so long
+# text is translated in pieces and stitched back together. Sized to stay well
+# inside an 8B model's context while keeping the number of round-trips sane.
+TRANSLATE_CHUNK_CHARS = 2500
+
+
+def _split_for_translation(text: str, limit: int = TRANSLATE_CHUNK_CHARS) -> list[str]:
+    """Split on line boundaries into <=limit-char pieces, so a chat transcript
+    is never cut mid-message. A single over-long line is passed through whole
+    (the model truncates it, which beats dropping it silently)."""
+    chunks: list[str] = []
+    current: list[str] = []
+    size = 0
+    for line in text.splitlines(keepends=True):
+        if current and size + len(line) > limit:
+            chunks.append("".join(current))
+            current, size = [], 0
+        current.append(line)
+        size += len(line)
+    if current:
+        chunks.append("".join(current))
+    return chunks
+
+
 def translate(text: str, target: str = "Hebrew") -> str | None:
     """Translate free text into `target` (default Hebrew) with the local LLM —
     for reading Russian/other-language evidence. Personal and place names are
-    transliterated into the target script. Returns the translation, "" for
-    empty input, or None when the LLM is unavailable/fails."""
+    transliterated into the target script. Long documents are translated in
+    chunks and rejoined. Returns the translation, "" for empty input, or None
+    when the LLM is unavailable/fails on the first chunk."""
     text = (text or "").strip()
     if not text:
         return ""
-    return _chat([
-        {
-            "role": "system",
-            "content": (
-                f"You are a professional legal translator. Translate the user's "
-                f"text into {target}. Output ONLY the translation — no notes, no "
-                f"transliteration in brackets, no original text. Render personal "
-                f"and place names in {target} script."
-            ),
-        },
-        {"role": "user", "content": text},
-    ])
+
+    system = {
+        "role": "system",
+        "content": (
+            f"You are a professional legal translator. Translate the user's "
+            f"text into {target}. Output ONLY the translation — no notes, no "
+            f"transliteration in brackets, no original text. Render personal "
+            f"and place names in {target} script. Keep line breaks, timestamps, "
+            f"phone numbers and speaker names in place."
+        ),
+    }
+
+    pieces: list[str] = []
+    for i, chunk in enumerate(_split_for_translation(text)):
+        out = _chat([system, {"role": "user", "content": chunk}])
+        if out is None:
+            if i == 0:
+                return None  # LLM unavailable — caller falls back to an error
+            # partial failure mid-document: keep what we have, flag the gap
+            # rather than throwing away minutes of completed translation
+            logger.warning("translation failed on chunk %s of a long document", i)
+            pieces.append("[…קטע שלא תורגם…]")
+            continue
+        pieces.append(out)
+    return "\n".join(pieces)
 
 
 def to_hebrew_name(name: str) -> str | None:

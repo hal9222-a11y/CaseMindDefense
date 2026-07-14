@@ -27,6 +27,60 @@ def test_translate_without_llm_returns_503(monkeypatch):
         assert r.status_code == 503
 
 
+def test_long_document_is_translated_in_chunks(monkeypatch):
+    # regression: an 83k-char WhatsApp export used to be rejected outright (422);
+    # it must be split and stitched instead
+    from app.services.llm_service import _split_for_translation, translate
+
+    seen = []
+
+    def fake_chat(messages):
+        body = messages[-1]["content"]
+        seen.append(body)
+        return f"<he>{body.strip()}</he>"
+
+    monkeypatch.setattr(llm_service, "_chat", fake_chat)
+    text = "".join(f"строка номер {i}\n" for i in range(2000))
+    assert len(text) > 20000  # the old hard cap
+
+    chunks = _split_for_translation(text)
+    assert len(chunks) > 1
+    assert all(len(c) <= 2500 or "\n" not in c.strip() for c in chunks)
+    assert "".join(chunks) == text  # nothing dropped
+
+    out = translate(text)
+    assert len(seen) == len(chunks)  # one LLM call per chunk
+    assert out.count("<he>") == len(chunks)
+
+
+def test_partial_chunk_failure_keeps_the_rest(monkeypatch):
+    # a mid-document LLM hiccup must not throw away minutes of finished work
+    calls = {"n": 0}
+
+    def flaky_chat(messages):
+        calls["n"] += 1
+        return None if calls["n"] == 2 else "תורגם"
+
+    monkeypatch.setattr(llm_service, "_chat", flaky_chat)
+    text = "x" * 2400 + "\n" + "y" * 2400 + "\n" + "z" * 2400
+    out = llm_service.translate(text)
+    assert out is not None
+    assert "תורגם" in out
+    assert "קטע שלא תורגם" in out  # the gap is flagged, not silently dropped
+
+
+def test_first_chunk_failure_reports_unavailable(monkeypatch):
+    monkeypatch.setattr(llm_service, "_chat", lambda messages: None)
+    assert llm_service.translate("Юлия") is None
+
+
+def test_oversized_document_gets_actionable_413():
+    with TestClient(app) as client:
+        r = client.post("/translate", json={"text": "я" * 130_000})
+        assert r.status_code == 413
+        assert "סמן קטע" in r.json()["detail"]  # tells the user what to do
+
+
 def test_translate_empty_text_is_a_noop():
     with TestClient(app) as client:
         r = client.post("/translate", json={"text": "   "})

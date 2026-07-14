@@ -189,10 +189,16 @@ class ApiClient:
         return response.json()
 
     def translate_text(self, text: str, target: str = "Hebrew") -> dict[str, Any]:
+        # a local model manages ~10 chars/sec on real text and long documents are
+        # done in chunks, so scale the wait with the text (generously) instead of
+        # a flat ceiling that would abort a translation the server is still doing
+        timeout = max(300, len(text) / 5)
         response = self._session.post(
             self._url("/translate"),
-            json={"text": text, "target": target}, timeout=180,
+            json={"text": text, "target": target}, timeout=timeout,
         )
+        if response.status_code == 413:
+            raise RuntimeError(response.json().get("detail", "המסמך ארוך מדי לתרגום"))
         response.raise_for_status()
         return response.json()
 

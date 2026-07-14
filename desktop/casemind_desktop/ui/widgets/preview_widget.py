@@ -23,6 +23,11 @@ from workers.api_worker import run_async
 IMAGE_MIME_PREFIX = "image/"
 MAX_IMAGE_WIDTH = 900
 
+# measured against a local 8B model on real chat text (~10 chars/sec); keep the
+# estimate pessimistic so the quoted wait is never shorter than the real one
+CHARS_PER_SECOND = 10
+LONG_DOC_CHARS = 2000
+
 
 class PreviewWidget(QWidget):
     """Preview engine: TXT via backend content API, images from the local
@@ -34,6 +39,7 @@ class PreviewWidget(QWidget):
         self._current_id: int | None = None
         self._highlight: str | None = None
         self._current_text: str = ""
+        self._translating_selection = False
 
         self._text_view = QTextEdit()
         self._text_view.setReadOnly(True)
@@ -129,9 +135,26 @@ class PreviewWidget(QWidget):
         self._stack.setCurrentIndex(2)
 
     def _translate(self) -> None:
-        text = self._current_text.strip()
+        # translating only what you highlighted is usually what you want, and on
+        # a local model it is the difference between seconds and many minutes
+        selected = self._text_view.textCursor().selectedText().replace(" ", "\n").strip()
+        text = selected or self._current_text.strip()
         if not text:
             return
+
+        if not selected and len(text) > LONG_DOC_CHARS:
+            minutes = max(1, round(len(text) / CHARS_PER_SECOND / 60))
+            answer = QMessageBox.question(
+                self, "מסמך ארוך",
+                f"המסמך מכיל {len(text):,} תווים — תרגום מלא ייקח כ-{minutes} דקות.\n\n"
+                "טיפ: סמן קטע בתצוגה ולחץ שוב כדי לתרגם רק אותו (מהיר בהרבה).\n\n"
+                "לתרגם בכל זאת את כל המסמך?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+
+        self._translating_selection = bool(selected)
         self._translate_button.setEnabled(False)
         self._translate_button.setText("🇮🇱 מתרגם…")
         run_async(
@@ -143,9 +166,10 @@ class PreviewWidget(QWidget):
         self._translate_button.setText("🇮🇱 תרגם לעברית")
         self._translate_button.setEnabled(True)
         translated = result.get("translated", "")
-        # show the Hebrew translation above the original so both are visible
+        header = "[תרגום הקטע המסומן]" if self._translating_selection else "[תרגום לעברית]"
+        # keep the original below the translation — evidence must stay verifiable
         self._text_view.setPlainText(
-            f"[תרגום לעברית]\n{translated}\n\n———\n[מקור]\n{self._current_text}"
+            f"{header}\n{translated}\n\n———\n[מקור]\n{self._current_text}"
         )
         self._stack.setCurrentIndex(1)
 
