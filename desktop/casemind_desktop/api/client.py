@@ -4,18 +4,67 @@ import os
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from api import endpoints
 from config.settings import BACKEND_BASE_URL, REQUEST_TIMEOUT
 
 
+class _BackendSession(requests.Session):
+    """Turns transport failures into something a lawyer can act on.
+
+    The raw exception ("HTTPConnectionPool(host='127.0.0.1', port=8000): Max
+    retries exceeded ... WinError 10061") is meaningless to the user, and it
+    surfaces for a mundane reason: the backend was restarting. Retry the blips,
+    and explain the rest in plain Hebrew.
+    """
+
+    def request(self, *args: Any, **kwargs: Any):  # type: ignore[override]
+        try:
+            return super().request(*args, **kwargs)
+        except requests.ConnectionError as exc:
+            raise RuntimeError(
+                "השרת אינו זמין (127.0.0.1:8000).\n\n"
+                "ייתכן שהוא בהפעלה מחדש — המתן רגע ונסה שוב. "
+                "אם זה נמשך, הפעל מחדש את האפליקציה."
+            ) from exc
+        except requests.Timeout as exc:
+            raise RuntimeError(
+                "השרת לא הגיב בזמן.\n\n"
+                "פעולות AI ותרגום על מודל מקומי עשויות לקחת דקות ארוכות. "
+                "נסה שוב, או המתן שהעיבוד ברקע יסתיים."
+            ) from exc
+
+
 class ApiClient:
     def __init__(self, base_url: str = BACKEND_BASE_URL) -> None:
         self.base_url = base_url.rstrip("/")
-        self._session = requests.Session()
+        self._session = _BackendSession()
+        # ride out a backend restart instead of failing the page outright
+        retry = Retry(
+            total=3,
+            connect=3,
+            backoff_factor=0.5,  # 0.5s, 1s, 2s
+            status_forcelist=(502, 503, 504),
+            # GET/HEAD only (the urllib3 default). POST is deliberately NOT
+            # retried: creating a case or importing a file twice is worse than a
+            # visible error, and a retry cannot know whether the first attempt
+            # reached the server.
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self._session.mount("http://", adapter)
+        self._session.mount("https://", adapter)
+
+        # the heartbeat must NOT retry: it polls every few seconds and its whole
+        # job is to report the backend being down promptly. Retrying would make
+        # each poll take ~11s and pile the polls on top of each other.
+        self._probe = requests.Session()
+
         api_key = os.getenv("CASEMIND_API_KEY")
         if api_key:
             self._session.headers["X-API-Key"] = api_key
+            self._probe.headers["X-API-Key"] = api_key
         # the active case scope; analysis calls (search/timeline/entities/
         # contradictions/graph/ask) inherit it so one case's material never
         # bleeds into another's view. None = all cases.
@@ -31,7 +80,7 @@ class ApiClient:
 
     def health(self) -> dict[str, Any]:
         try:
-            response = self._session.get(self._url(endpoints.HEALTH), timeout=REQUEST_TIMEOUT)
+            response = self._probe.get(self._url(endpoints.HEALTH), timeout=5)
             response.raise_for_status()
             return {"ok": True, "data": response.json() if response.content else {}}
         except Exception as exc:
@@ -39,7 +88,7 @@ class ApiClient:
 
     def status(self) -> dict[str, Any]:
         try:
-            response = self._session.get(self._url("/status"), timeout=8)
+            response = self._probe.get(self._url("/status"), timeout=8)
             response.raise_for_status()
             return response.json()
         except Exception as exc:
