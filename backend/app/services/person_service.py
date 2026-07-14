@@ -1,14 +1,70 @@
 from __future__ import annotations
 
+import difflib
+import logging
+from collections import Counter
+
 from sqlmodel import Session, select
 
 from app.models.evidence import Evidence, EvidenceChunk, Person, PersonLink
-from app.services.entity_service import PHONE_RE
+from app.services import llm_service
+from app.services.entity_service import CYRILLIC_ENTITY_RE, PHONE_RE, is_noise_name
+
+logger = logging.getLogger(__name__)
 
 # how close a name must be to a phone (in characters) to be a candidate,
 # and the distance at which confidence decays to the floor
 NEAR_WINDOW = 120
 MIN_CONFIDENCE = 0.5
+
+# People get recorded in Hebrew ("יוליה") while the evidence is Russian ("Юля"),
+# so a literal name search misses nearly every mention. Match on the Hebrew
+# reading of the Cyrillic name, fuzzily — transliteration wobbles (Юлия/Юля both
+# give יוליה, but a nickname may come back shorter).
+#
+# The threshold is deliberately strict. Measured on a real case: the correct
+# name scores 1.00, while different people (Алеся, Алина) score 0.60 — so a
+# loose bar attributes one person's phone to another, which is far worse in an
+# evidence tool than suggesting nothing. Precision over recall here.
+CROSS_SCRIPT_MIN_RATIO = 0.85
+MAX_CROSS_SCRIPT_LOOKUPS = 15  # each is one LLM round-trip
+
+
+def _cross_script_names(
+    chunks: list[EvidenceChunk], persons: list[Person], aliases: dict[int, list[str]]
+) -> dict[int, list[str]]:
+    """Cyrillic spellings of the case's people, so a Hebrew-named person can be
+    matched against Russian evidence. Only the Cyrillic names that actually sit
+    next to a phone number are transliterated — a handful, not the whole corpus.
+    Returns {person_id: [cyrillic names]}; empty when no LLM is available."""
+    candidates: Counter[str] = Counter()
+    for chunk in chunks:
+        text = chunk.text or ""
+        for m in PHONE_RE.finditer(text):
+            window = text[max(0, m.start() - NEAR_WINDOW) : m.end() + NEAR_WINDOW]
+            candidates.update(
+                tok for tok in CYRILLIC_ENTITY_RE.findall(window) if not is_noise_name(tok)
+            )
+    if not candidates or not llm_service.ollama_available():
+        return {}
+
+    extra: dict[int, list[str]] = {}
+    # rank by how often the name sits next to a phone, NOT alphabetically:
+    # Cyrillic sorts Ю last, so an alphabetical cut dropped "Юля" — the very
+    # name we needed — before it was ever looked up
+    for cyrillic, _count in candidates.most_common(MAX_CROSS_SCRIPT_LOOKUPS):
+        hebrew = llm_service.to_hebrew_name(cyrillic)
+        if not hebrew:
+            continue
+        for person in persons:
+            if any(
+                difflib.SequenceMatcher(None, hebrew, known).ratio() >= CROSS_SCRIPT_MIN_RATIO
+                for known in _person_names(person, aliases)
+            ):
+                extra.setdefault(person.id, []).append(cyrillic)
+                logger.info("cross-script match: %s ~ %s (%s)", cyrillic, hebrew, person.name)
+                break
+    return extra
 
 
 def _existing_phone_links(session: Session, person_ids: list[int]) -> set[tuple[int, str]]:
@@ -68,13 +124,6 @@ def suggest_phone_links(session: Session, case_id: int) -> list[dict]:
 
     already = _existing_phone_links(session, person_ids)
 
-    # name occurrences to search for, longest first so "דוד לוי" wins over "דוד"
-    name_index: list[tuple[str, Person]] = []
-    for p in persons:
-        for name in _person_names(p, aliases):
-            name_index.append((name, p))
-    name_index.sort(key=lambda t: -len(t[0]))
-
     case_evidence = {
         e.id: e.filename
         for e in session.exec(select(Evidence).where(Evidence.case_id == case_id)).all()
@@ -82,6 +131,17 @@ def suggest_phone_links(session: Session, case_id: int) -> list[dict]:
     chunks = session.exec(
         select(EvidenceChunk).where(EvidenceChunk.evidence_id.in_(list(case_evidence)))
     ).all()
+
+    # a Hebrew-named person is invisible in Russian evidence unless we also look
+    # for their Cyrillic spelling
+    cross_script = _cross_script_names(chunks, persons, aliases)
+
+    # name occurrences to search for, longest first so "דוד לוי" wins over "דוד"
+    name_index: list[tuple[str, Person]] = []
+    for p in persons:
+        for name in _person_names(p, aliases) + cross_script.get(p.id, []):
+            name_index.append((name, p))
+    name_index.sort(key=lambda t: -len(t[0]))
 
     best: dict[tuple[int, str], dict] = {}
     for chunk in chunks:
