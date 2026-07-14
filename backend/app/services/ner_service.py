@@ -12,6 +12,7 @@ from app.services.entity_service import (
     LATIN_ENTITY_RE,
     PHONE_RE,
     VEHICLE_PLATE_RE,
+    is_noise_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,10 +70,12 @@ def extract_entities(text: str) -> list[dict]:
         except Exception as exc:
             logger.warning("NER inference failed on chunk: %s", exc)
 
-    # Cyrillic names always via regex: the Hebrew NER model does not
-    # cover Russian, and Russian capitalization makes this reliable
+    # Cyrillic names always via regex: the Hebrew NER model does not cover
+    # Russian. Capitalisation alone is not enough — it also starts every
+    # sentence — so drop the pronouns/particles it sweeps up.
     for entity in CYRILLIC_ENTITY_RE.findall(text):
-        entities.append({"text": entity, "label": "name"})
+        if not is_noise_name(entity):
+            entities.append({"text": entity, "label": "name"})
 
     for phone in PHONE_RE.findall(text):
         entities.append({"text": phone.strip(), "label": "phone"})

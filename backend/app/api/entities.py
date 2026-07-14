@@ -1,9 +1,21 @@
-from fastapi import APIRouter, Depends, Query
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlmodel import Session
+
 from app.db import get_session
+from app.services import llm_service
 from app.services.entity_service import entity_graph, list_entities
 
 router = APIRouter(prefix="/entities", tags=["entities"])
+
+CYRILLIC_RE = re.compile("[Ѐ-ӿ]")
+MAX_NAMES_PER_CALL = 40  # each name is one LLM round-trip; keep the wait bounded
+
+
+class HebrewNamesRequest(BaseModel):
+    names: list[str]
 
 @router.get("")
 def entities(
@@ -13,6 +25,30 @@ def entities(
     session: Session = Depends(get_session),
 ):
     return list_entities(session, case_id=case_id)[offset : offset + limit]
+
+@router.post("/hebrew-names")
+def hebrew_names(req: HebrewNamesRequest):
+    """Hebrew reading for Cyrillic names shown in the Entities list
+    (Марина → מרינה), so a Russian case is readable at a glance.
+    Returns {russian_name: hebrew_name}; names it cannot render are omitted."""
+    if not llm_service.ollama_available():
+        raise HTTPException(
+            status_code=503,
+            detail="תרגום שמות דורש מודל שפה מקומי (Ollama) — לא זמין כרגע",
+        )
+    targets = [n for n in dict.fromkeys(req.names) if CYRILLIC_RE.search(n or "")]
+    if len(targets) > MAX_NAMES_PER_CALL:
+        raise HTTPException(
+            status_code=413,
+            detail=f"יותר מדי שמות בבת אחת ({len(targets)}, מקסימום {MAX_NAMES_PER_CALL}).",
+        )
+    out: dict[str, str] = {}
+    for name in targets:
+        hebrew = llm_service.to_hebrew_name(name)
+        if hebrew:
+            out[name] = hebrew
+    return {"names": out, "model": llm_service.active_model()}
+
 
 @router.get("/graph")
 def graph(

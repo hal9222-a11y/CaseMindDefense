@@ -188,6 +188,15 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def hebrew_names(self, names: list[str]) -> dict[str, Any]:
+        # one LLM round-trip per name; the server caps the batch
+        response = self._session.post(
+            self._url(f"{endpoints.ENTITIES}/hebrew-names"),
+            json={"names": names}, timeout=300,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def translate_text(self, text: str, target: str = "Hebrew") -> dict[str, Any]:
         # a local model manages ~10 chars/sec on real text and long documents are
         # done in chunks, so scale the wait with the text (generously) instead of

@@ -65,9 +65,10 @@ class MainWindow(QMainWindow):
         )
         self.entities_page = DataPage(
             "Entities",
-            [("Entity", "entity"), ("Type", "type"), ("Count", "count")],
+            [("Entity", "entity"), ("עברית", "hebrew"), ("Type", "type"), ("Count", "count")],
             self.api.entities,
             note="double-click to search occurrences",
+            hebrew_names_fn=self.api.hebrew_names,
         )
         self.contradictions_page = DataPage(
             "Contradictions",

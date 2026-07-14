@@ -22,6 +22,40 @@ HEBREW_STOPWORDS = {
     "אין", "גם", "או", "אם", "כי", "אבל", "אשר", "מתוך", "בין", "עוד", "כל",
 }
 
+# Russian capitalises the first word of every sentence, so CYRILLIC_ENTITY_RE
+# tags pronouns and particles as names (Она/Это/Нет were the top 3 "names" in a
+# real chat). Same job HEBREW_STOPWORDS does for Hebrew.
+RUSSIAN_STOPWORDS = {
+    "я", "ты", "он", "она", "оно", "мы", "вы", "они",
+    "мне", "меня", "тебе", "тебя", "ему", "ей", "им", "нам", "нас", "вам", "вас",
+    "мой", "моя", "твой", "твоя", "свой", "себя",
+    "это", "этот", "эта", "эти", "тот", "та", "те", "там", "тут", "здесь",
+    "да", "нет", "не", "ни", "и", "а", "но", "или", "если", "что", "чтобы",
+    "как", "так", "такой", "какой", "кто", "где", "когда", "почему", "зачем",
+    "все", "всё", "весь", "вся", "уже", "ещё", "еще", "тоже", "только", "просто",
+    "очень", "может", "можно", "надо", "нужно", "хорошо", "ладно", "конечно",
+    "спасибо", "привет", "пока", "вот", "ну", "ага", "ок", "оки", "давай",
+    "был", "была", "было", "были", "есть", "будет", "буду", "потом", "сейчас",
+    "сегодня", "завтра", "вчера", "утром", "вечером", "почти", "тогда", "теперь",
+    "отлично", "хочу", "знаю", "думаю", "говорит", "сказал", "сказала",
+    # chat fillers and imperatives that open a sentence in a WhatsApp thread
+    "потому", "поэтому", "скажи", "скажите", "слушай", "слушайте", "смотри",
+    "короче", "блин", "значит", "кстати", "вообще", "наверное", "кажется",
+    "понятно", "точно", "честно", "нормально", "спокойно", "интересно",
+    "странно", "жаль", "боже", "господи", "правда", "конец", "начало",
+}
+
+
+def is_noise_name(text: str) -> bool:
+    """A capitalised Cyrillic token that is really a pronoun/particle/filler,
+    not a person. Shared by extraction (don't store it) and listing (don't show
+    the ones already stored, so existing cases are cleaned without a reindex)."""
+    word = (text or "").strip()
+    if word.lower() in RUSSIAN_STOPWORDS:
+        return True
+    # interjections like "Ааа"/"Ооо" — a single letter repeated is never a name
+    return len(set(word.lower())) == 1 and len(word) > 1
+
 
 def _add(counts: dict[tuple[str, str], int], entity: str, entity_type: str) -> None:
     entity = (entity or "").strip()
@@ -51,9 +85,13 @@ def list_entities(session: Session, case_id: int | None = None) -> list[dict]:
     rows = session.exec(stmt.group_by(ExtractedEntity.text, ExtractedEntity.label)).all()
 
     if rows:
+        # filter on read too: evidence indexed before the stopword list existed
+        # still has the noise stored, and re-OCRing every file to purge it is
+        # not worth it
         return [
             {"entity": text, "type": label, "count": count}
             for text, label, count in sorted(rows, key=lambda r: (-r[2], r[0]))
+            if not is_noise_name(text)
         ]
 
     return _legacy_regex_scan(session) if case_id is None else []
