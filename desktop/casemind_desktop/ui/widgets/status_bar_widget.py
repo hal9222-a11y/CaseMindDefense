@@ -37,7 +37,14 @@ class StatusBarWidget(QStatusBar):
         parts = []
         if s.get("busy"):
             n = s.get("processing", 0)
-            parts.append(f"⚙️ מעבד {n} קבצים ברקע (OCR / תמלול / אינדוקס)…")
+            current = s.get("current") or {}
+            name = current.get("filename")
+            stage = current.get("stage", "עיבוד")
+            if name:
+                # what's being worked on now + how many still queued
+                parts.append(f"⚙️ {stage}: {name}  ·  נותרו {n} לעיבוד")
+            else:
+                parts.append(f"⚙️ מעבד {n} קבצים ברקע…")
         else:
             parts.append("🟢 המערכת מוכנה")
 

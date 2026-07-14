@@ -100,6 +100,7 @@ class PersonsPage(QWidget):
         self.new_ext_button = QPushButton("New (not in evidence)")
         self.suggest_button = QPushButton("🔍 Suggest phone links")
         self.suggest_alias_button = QPushButton("🔍 Suggest nicknames")
+        self.translate_button = QPushButton("🇮🇱 עברית לשמות")
         self.delete_button = QPushButton("Delete Person")
         self.delete_button.setStyleSheet("QPushButton { background: #b91c1c; }")
         self.refresh_button = QPushButton("Refresh")
@@ -107,6 +108,7 @@ class PersonsPage(QWidget):
         self.new_ext_button.clicked.connect(lambda: self._create_person(False))
         self.suggest_button.clicked.connect(self._suggest_phones)
         self.suggest_alias_button.clicked.connect(self._suggest_aliases)
+        self.translate_button.clicked.connect(self._translate_names)
         self.delete_button.clicked.connect(self._delete_person)
         self.refresh_button.clicked.connect(self.refresh)
 
@@ -117,6 +119,7 @@ class PersonsPage(QWidget):
         top.addWidget(self.new_ext_button)
         top.addWidget(self.suggest_button)
         top.addWidget(self.suggest_alias_button)
+        top.addWidget(self.translate_button)
         top.addWidget(self.delete_button)
         top.addWidget(self.refresh_button)
 
@@ -190,7 +193,8 @@ class PersonsPage(QWidget):
         self.person_list.clear()
         for p in persons:
             tag = "" if p["in_evidence"] else "  ⟨לא בחומרים⟩"
-            item = QListWidgetItem(f"{p['name']}{tag}")
+            he = f"  ({p['name_he']})" if p.get("name_he") else ""
+            item = QListWidgetItem(f"{p['name']}{he}{tag}")
             self.person_list.addItem(item)
         self.detail.clear()
         self._selected = None
@@ -215,7 +219,10 @@ class PersonsPage(QWidget):
         p = self._selected
         if not p:
             return
-        lines = [f"שם: {p['name']}"]
+        name_line = f"שם: {p['name']}"
+        if p.get("name_he"):
+            name_line += f"  ({p['name_he']})"
+        lines = [name_line]
         if not p["in_evidence"]:
             lines.append("(אדם שנוסף ידנית — לא מופיע בחומרי החקירה)")
         if p["description"]:
@@ -373,6 +380,35 @@ class PersonsPage(QWidget):
 
     def _alias_error(self, message: str) -> None:
         self.suggest_alias_button.setEnabled(True)
+        QMessageBox.critical(self, "שגיאה", message)
+
+    def _translate_names(self) -> None:
+        if self.api.current_case_id is None:
+            QMessageBox.information(self, "בחר תיק", "בחר תיק ספציפי בדף Evidence תחילה.")
+            return
+        self.translate_button.setEnabled(False)
+        self.translate_button.setText("🇮🇱 מתרגם…")
+        run_async(
+            self.api.translate_person_names, self.api.current_case_id,
+            on_done=self._on_names_translated, on_error=self._translate_error,
+        )
+
+    def _on_names_translated(self, result: dict[str, Any]) -> None:
+        self.translate_button.setEnabled(True)
+        self.translate_button.setText("🇮🇱 עברית לשמות")
+        count = result.get("count", 0)
+        if count:
+            self.refresh()
+            QMessageBox.information(self, "סיום", f"נוספו שמות בעברית ל-{count} אנשים.")
+        else:
+            QMessageBox.information(
+                self, "אין מה לתרגם",
+                "לא נמצאו שמות ברוסית ללא צורה עברית (או שכולם כבר תורגמו).",
+            )
+
+    def _translate_error(self, message: str) -> None:
+        self.translate_button.setEnabled(True)
+        self.translate_button.setText("🇮🇱 עברית לשמות")
         QMessageBox.critical(self, "שגיאה", message)
 
     def _remove_link(self) -> None:

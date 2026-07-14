@@ -6,7 +6,10 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QTextCursor
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
+    QMessageBox,
+    QPushButton,
     QScrollArea,
     QStackedWidget,
     QTextEdit,
@@ -30,9 +33,15 @@ class PreviewWidget(QWidget):
         self.api = api
         self._current_id: int | None = None
         self._highlight: str | None = None
+        self._current_text: str = ""
 
         self._text_view = QTextEdit()
         self._text_view.setReadOnly(True)
+
+        # translate the shown document to Hebrew (for Russian/other evidence)
+        self._translate_button = QPushButton("🇮🇱 תרגם לעברית")
+        self._translate_button.setEnabled(False)
+        self._translate_button.clicked.connect(self._translate)
 
         self._image_label = QLabel()
         self._image_label.setAlignment(Qt.AlignCenter)
@@ -49,8 +58,13 @@ class PreviewWidget(QWidget):
         self._stack.addWidget(self._text_view)      # 1
         self._stack.addWidget(image_scroll)         # 2
 
+        header = QHBoxLayout()
+        header.addWidget(QLabel("Preview"))
+        header.addStretch()
+        header.addWidget(self._translate_button)
+
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("Preview"))
+        layout.addLayout(header)
         layout.addWidget(self._stack)
         self.setLayout(layout)
 
@@ -88,7 +102,9 @@ class PreviewWidget(QWidget):
     def _on_text_loaded(self, payload: dict[str, Any]) -> None:
         if payload.get("id") != self._current_id:
             return  # a different row was selected while this request was in flight
-        self._text_view.setPlainText(payload.get("text", ""))
+        self._current_text = payload.get("text", "")
+        self._text_view.setPlainText(self._current_text)
+        self._translate_button.setEnabled(bool(self._current_text.strip()))
         self._stack.setCurrentIndex(1)
         if self._highlight:
             # scroll to and select the cited text; strip snippet ellipses and
@@ -112,11 +128,40 @@ class PreviewWidget(QWidget):
         self._image_label.setPixmap(pixmap)
         self._stack.setCurrentIndex(2)
 
+    def _translate(self) -> None:
+        text = self._current_text.strip()
+        if not text:
+            return
+        self._translate_button.setEnabled(False)
+        self._translate_button.setText("🇮🇱 מתרגם…")
+        run_async(
+            self.api.translate_text, text,
+            on_done=self._on_translated, on_error=self._on_translate_error,
+        )
+
+    def _on_translated(self, result: dict[str, Any]) -> None:
+        self._translate_button.setText("🇮🇱 תרגם לעברית")
+        self._translate_button.setEnabled(True)
+        translated = result.get("translated", "")
+        # show the Hebrew translation above the original so both are visible
+        self._text_view.setPlainText(
+            f"[תרגום לעברית]\n{translated}\n\n———\n[מקור]\n{self._current_text}"
+        )
+        self._stack.setCurrentIndex(1)
+
+    def _on_translate_error(self, message: str) -> None:
+        self._translate_button.setText("🇮🇱 תרגם לעברית")
+        self._translate_button.setEnabled(True)
+        QMessageBox.critical(self, "שגיאת תרגום", message)
+
     def _show_message(self, message: str) -> None:
+        self._translate_button.setEnabled(False)
         self._message_label.setText(message)
         self._stack.setCurrentIndex(0)
 
     def clear(self) -> None:
         self._current_id = None
         self._highlight = None
+        self._current_text = ""
+        self._translate_button.setEnabled(False)
         self._show_message("Select evidence to preview.")

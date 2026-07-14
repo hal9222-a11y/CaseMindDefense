@@ -52,12 +52,12 @@ def answer_with_evidence(
             "answer": NOT_FOUND_ANSWER,
             "citations": citations,
             "mode": "llm",
-            "model": llm_service.LLM_MODEL,
+            "model": llm_service.active_model(),
         }
 
     return {
         "answer": llm_answer,
         "citations": citations,
         "mode": "llm",
-        "model": llm_service.LLM_MODEL,
+        "model": llm_service.active_model(),
     }

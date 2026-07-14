@@ -11,8 +11,19 @@ import urllib.request
 logger = logging.getLogger(__name__)
 
 OLLAMA_URL = os.getenv("CASEMIND_OLLAMA_URL", "http://127.0.0.1:11434")
-LLM_MODEL = os.getenv("CASEMIND_LLM_MODEL", "qwen2.5:3b-instruct")
 LLM_TIMEOUT_SECONDS = int(os.getenv("CASEMIND_LLM_TIMEOUT", "120"))
+
+# The app auto-selects the best general chat model actually installed in Ollama,
+# so a machine with capable models uses them without configuration. Set
+# CASEMIND_LLM_MODEL to force a specific model instead.
+FORCED_MODEL = os.getenv("CASEMIND_LLM_MODEL") or None
+
+# names/families that aren't general-purpose chat models — never auto-select
+_EXCLUDE_RE = re.compile(r"ocr|embed|rerank|whisper|bge|vl|vision|code|guard|cloud", re.I)
+# largest model to auto-pick: bigger ones give better answers but on local CPU
+# a 30B model can take minutes and re-introduce timeouts. Override via env to
+# force a bigger model if the machine has the GPU for it.
+_SIZE_CEILING_B = float(os.getenv("CASEMIND_LLM_MAX_PARAMS_B", "14"))
 
 SYSTEM_PROMPT = """You are an evidence analysis assistant for a criminal defense team.
 You will receive numbered evidence excerpts and a question.
@@ -29,23 +40,113 @@ Hard rules:
 HEBREW_RE = re.compile("[֐-׿]")
 
 
-_AVAIL_TTL = 15.0  # seconds; the status bar polls often, don't hammer Ollama
-_avail_cache: dict[str, float | bool] = {"ts": 0.0, "value": False}
+_MODEL_TTL = 15.0  # seconds; the status bar polls often, don't hammer Ollama
+_model_cache: dict[str, float | str | None] = {"ts": 0.0, "model": None}
+
+
+def _installed_models() -> list[dict]:
+    with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=2) as resp:
+        return json.load(resp).get("models", [])
+
+
+def _size_b(model: dict) -> float:
+    """Parameter count in billions, parsed from Ollama's '9.7B' / '494.03M' /
+    '1t' strings. 0.0 when unknown."""
+    raw = str(model.get("details", {}).get("parameter_size") or "").strip().lower()
+    match = re.match(r"([\d.]+)\s*([bmt]?)", raw)
+    if not match:
+        return 0.0
+    value = float(match.group(1))
+    return {"m": value / 1000, "t": value * 1000, "b": value, "": value}[match.group(2)]
+
+
+def _pick_model(installed: list[dict]) -> str | None:
+    """Choose which installed model to use: the forced one if set and present,
+    else the largest general chat model within the size ceiling (skipping
+    OCR/vision/code/embedding models). Falls back to the smallest available if
+    every general model exceeds the ceiling, so the user always gets an LLM."""
+    if not installed:
+        return None
+    if FORCED_MODEL:
+        base = FORCED_MODEL.split(":")[0]
+        return next(
+            (m["name"] for m in installed
+             if m["name"] == FORCED_MODEL or m["name"].split(":")[0] == base),
+            None,
+        )
+    def _label(m: dict) -> str:
+        return f"{m.get('name', '')} {m.get('details', {}).get('family', '')}"
+
+    usable = [m for m in installed if not _EXCLUDE_RE.search(_label(m))] or installed
+    within = [m for m in usable if _size_b(m) <= _SIZE_CEILING_B]
+    if within:
+        return max(within, key=_size_b)["name"]
+    return min(usable, key=_size_b)["name"]
+
+
+def active_model() -> str | None:
+    """The Ollama model the app will use, auto-selected from what's installed
+    (or CASEMIND_LLM_MODEL when set). None when Ollama is down / has no model.
+    Cached briefly since the status bar polls often."""
+    now = time.monotonic()
+    if now - float(_model_cache["ts"]) < _MODEL_TTL:
+        return _model_cache["model"]  # type: ignore[return-value]
+    try:
+        model = _pick_model(_installed_models())
+    except Exception:
+        model = None
+    _model_cache["ts"] = now
+    _model_cache["model"] = model
+    return model
 
 
 def ollama_available() -> bool:
-    now = time.monotonic()
-    if now - float(_avail_cache["ts"]) < _AVAIL_TTL:
-        return bool(_avail_cache["value"])
-    try:
-        with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=2) as resp:
-            models = json.load(resp).get("models", [])
-        value = any(m.get("name", "").startswith(LLM_MODEL.split(":")[0]) for m in models)
-    except Exception:
-        value = False
-    _avail_cache["ts"] = now
-    _avail_cache["value"] = value
-    return value
+    return active_model() is not None
+
+
+def translate(text: str, target: str = "Hebrew") -> str | None:
+    """Translate free text into `target` (default Hebrew) with the local LLM —
+    for reading Russian/other-language evidence. Personal and place names are
+    transliterated into the target script. Returns the translation, "" for
+    empty input, or None when the LLM is unavailable/fails."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    return _chat([
+        {
+            "role": "system",
+            "content": (
+                f"You are a professional legal translator. Translate the user's "
+                f"text into {target}. Output ONLY the translation — no notes, no "
+                f"transliteration in brackets, no original text. Render personal "
+                f"and place names in {target} script."
+            ),
+        },
+        {"role": "user", "content": text},
+    ])
+
+
+def to_hebrew_name(name: str) -> str | None:
+    """Hebrew form of a personal name (e.g. Юлия → יוליה) so a Russian name can
+    be shown with its Hebrew reading. None if the LLM is unavailable/fails."""
+    name = (name or "").strip()
+    if not name:
+        return ""
+    out = _chat([
+        {
+            "role": "system",
+            "content": (
+                "Transliterate the personal name into Hebrew letters. "
+                "Output ONLY the Hebrew name — no punctuation, no explanation, "
+                "no Latin/Cyrillic."
+            ),
+        },
+        {"role": "user", "content": name},
+    ])
+    if not out:
+        return out
+    # models sometimes add quotes or a trailing note; keep the first line only
+    return out.splitlines()[0].strip().strip('"\'').strip()
 
 
 def synthesize_answer(question: str, citations: list[dict]) -> str | None:
@@ -98,8 +199,11 @@ def _has_prose(answer: str) -> bool:
 
 
 def _chat(messages: list[dict]) -> str | None:
+    model = active_model()
+    if model is None:
+        return None
     payload = {
-        "model": LLM_MODEL,
+        "model": model,
         "stream": False,
         "messages": messages,
         "options": {"temperature": 0.1},

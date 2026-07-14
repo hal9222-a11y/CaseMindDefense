@@ -179,6 +179,23 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def translate_person_names(self, case_id: int) -> dict[str, Any]:
+        # LLM-backed: transliterates each Cyrillic name, allow generous time
+        response = self._session.post(
+            self._url(f"{endpoints.PERSONS}/translate-names"),
+            params={"case_id": case_id}, timeout=180,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def translate_text(self, text: str, target: str = "Hebrew") -> dict[str, Any]:
+        response = self._session.post(
+            self._url("/translate"),
+            json={"text": text, "target": target}, timeout=180,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def person_graph(self, case_id: int) -> dict[str, Any]:
         response = self._session.get(
             self._url(f"{endpoints.PERSONS}/graph"),

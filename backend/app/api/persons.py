@@ -1,17 +1,34 @@
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app.db import get_session
 from app.models.evidence import Case, Evidence, Person, PersonLink
+from app.services import llm_service
 from app.services.audit_service import log_event
 from app.services.person_service import person_graph, suggest_alias_links, suggest_phone_links
 
 router = APIRouter(prefix="/persons", tags=["persons"])
 
 LINK_KINDS = {"alias", "phone", "photo", "relation"}
+
+_CYRILLIC_RE = re.compile("[Ѐ-ӿ]")
+_HEBREW_RE = re.compile("[֐-׿]")
+
+
+def _hebrew_reading(name: str, links: list[PersonLink]) -> str | None:
+    """The stored Hebrew reading of a Cyrillic name (an alias in Hebrew),
+    for showing beside the original. None for non-Cyrillic names."""
+    if not _CYRILLIC_RE.search(name or ""):
+        return None
+    for ln in links:
+        if ln.kind == "alias" and _HEBREW_RE.search(ln.value or ""):
+            return ln.value
+    return None
 
 
 class CreatePersonRequest(BaseModel):
@@ -41,6 +58,7 @@ def _person_dict(session: Session, person: Person) -> dict:
         "id": person.id,
         "case_id": person.case_id,
         "name": person.name,
+        "name_he": _hebrew_reading(person.name, links),
         "description": person.description,
         "in_evidence": person.in_evidence,
         "links": [
@@ -70,6 +88,38 @@ def suggest_aliases(case_id: int = Query(...), session: Session = Depends(get_se
     """Guess that a name in the evidence is a nickname/variant of an existing
     person (part of the full name, or a short prefix nickname)."""
     return suggest_alias_links(session, case_id)
+
+
+@router.post("/translate-names")
+def translate_names(case_id: int = Query(...), session: Session = Depends(get_session)):
+    """For each person in the case whose name is in Cyrillic and has no Hebrew
+    reading yet, transliterate it to Hebrew (local LLM) and store it as an
+    alias, so the Russian name can be shown with its Hebrew form. Returns the
+    names that were added."""
+    if not llm_service.ollama_available():
+        raise HTTPException(
+            status_code=503,
+            detail="תרגום שמות דורש מודל שפה מקומי (Ollama) — לא זמין כרגע",
+        )
+    persons = session.exec(select(Person).where(Person.case_id == case_id)).all()
+    added: list[dict] = []
+    for person in persons:
+        if not _CYRILLIC_RE.search(person.name):
+            continue
+        links = session.exec(
+            select(PersonLink).where(PersonLink.person_id == person.id)
+        ).all()
+        if _hebrew_reading(person.name, links) is not None:
+            continue  # already has a Hebrew reading
+        hebrew = llm_service.to_hebrew_name(person.name)
+        if not hebrew or not _HEBREW_RE.search(hebrew):
+            continue  # model unavailable or gave nothing usable
+        session.add(PersonLink(person_id=person.id, kind="alias", value=hebrew))
+        session.commit()
+        log_event(session, "person_name_translated", case_id=case_id,
+                  name=person.name, value=hebrew)
+        added.append({"id": person.id, "name": person.name, "name_he": hebrew})
+    return {"translated": added, "count": len(added)}
 
 
 @router.get("/graph")

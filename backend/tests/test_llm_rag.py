@@ -4,7 +4,25 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import evidence_ai_service, llm_service
-from app.services.llm_service import _clean_answer, _has_prose
+from app.services.llm_service import _clean_answer, _has_prose, _pick_model
+
+
+def test_pick_model_prefers_largest_general_model_within_ceiling(monkeypatch):
+    # exercise the auto-select path regardless of any CASEMIND_LLM_MODEL set on
+    # the machine running the tests (a forced model would short-circuit this)
+    monkeypatch.setattr(llm_service, "FORCED_MODEL", None)
+    models = [
+        {"name": "qwen3.5:9b", "details": {"parameter_size": "9.7B", "family": "qwen35"}},
+        {"name": "qwen2.5:0.5b", "details": {"parameter_size": "494.03M", "family": "qwen2"}},
+        {"name": "deepseek-ocr:3b", "details": {"parameter_size": "3.3B", "family": "deepseekocr"}},
+        {"name": "qwen2.5vl:3b", "details": {"parameter_size": "3.8B", "family": "qwen25vl"}},
+        {"name": "big:27b", "details": {"parameter_size": "27.8B", "family": "qwen35"}},
+    ]
+    # OCR/vision excluded, 27B over the ceiling -> the 9B general model wins
+    assert _pick_model(models) == "qwen3.5:9b"
+    # a tiny-only machine still gets an LLM rather than None
+    assert _pick_model([{"name": "qwen2.5:0.5b", "details": {"parameter_size": "0.5B"}}]) == "qwen2.5:0.5b"
+    assert _pick_model([]) is None
 
 
 def test_clean_answer_normalizes_small_model_artifacts():
