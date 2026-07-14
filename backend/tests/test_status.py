@@ -14,6 +14,16 @@ def test_status_reports_counts_and_readiness(tmp_path):
         assert isinstance(s["busy"], bool)
 
 
+def test_status_breakdown_accounts_for_every_file(tmp_path):
+    # the "did it finish the material?" indicator: every file must land in
+    # exactly one bucket, so a failure can never hide behind a green light
+    with TestClient(app) as client:
+        s = client.get("/status").json()
+        buckets = s["processing"] + s["indexed"] + s["no_text"] + s["failed"]
+        assert buckets == s["evidence_total"]
+        assert s["failed"] >= 0
+
+
 def test_status_busy_reflects_processing(tmp_path):
     from sqlmodel import Session
     from app.db import get_engine

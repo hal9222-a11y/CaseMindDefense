@@ -24,6 +24,12 @@ def _stage_for(filename: str | None) -> str:
     return "אינדוקס"            # text extraction + embedding
 
 
+# evidence that carries searchable text; anything else is either still queued,
+# genuinely textless (a 16x16 UI icon), or a failure worth surfacing
+INDEXED_STATUSES = ("indexed", "ocr_indexed", "transcribed")
+EMPTY_STATUSES = ("no_text_found", "extraction_not_supported")
+
+
 @router.get("/status")
 def status(session: Session = Depends(get_session)):
     """A cheap snapshot of what the system is doing right now — for the
@@ -32,6 +38,18 @@ def status(session: Session = Depends(get_session)):
     processing = session.exec(
         select(func.count()).select_from(Evidence).where(Evidence.status == "processing")
     ).one()
+
+    # "did it finish the material?" — indexed vs textless vs failed, so the user
+    # can tell a completed backlog from a silently broken one
+    indexed = session.exec(
+        select(func.count()).select_from(Evidence)
+        .where(Evidence.status.in_(INDEXED_STATUSES))
+    ).one()
+    empty = session.exec(
+        select(func.count()).select_from(Evidence)
+        .where(Evidence.status.in_(EMPTY_STATUSES))
+    ).one()
+    failed = total - processing - indexed - empty
 
     current = None
     if processing:
@@ -48,6 +66,9 @@ def status(session: Session = Depends(get_session)):
         "processing": processing,
         "busy": processing > 0,
         "current": current,
+        "indexed": indexed,
+        "no_text": empty,
+        "failed": failed,
         "llm_available": llm_service.ollama_available(),
         "llm_model": llm_service.active_model(),
     }

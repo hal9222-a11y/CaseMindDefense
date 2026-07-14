@@ -34,21 +34,30 @@ class StatusBarWidget(QStatusBar):
             self.showMessage(f"🔴 השרת אינו זמין — {s.get('error', '')}")
             return
 
+        total = s.get("evidence_total", 0)
         parts = []
         if s.get("busy"):
             n = s.get("processing", 0)
             current = s.get("current") or {}
             name = current.get("filename")
             stage = current.get("stage", "עיבוד")
+            done = total - n
             if name:
-                # what's being worked on now + how many still queued
-                parts.append(f"⚙️ {stage}: {name}  ·  נותרו {n} לעיבוד")
+                # what's being worked on now + progress through the backlog
+                parts.append(f"⚙️ {stage}: {name}  ·  {done}/{total} — נותרו {n}")
             else:
-                parts.append(f"⚙️ מעבד {n} קבצים ברקע…")
+                parts.append(f"⚙️ מעבד ברקע…  {done}/{total}")
         else:
-            parts.append("🟢 המערכת מוכנה")
+            # the backlog is finished — say so, and say how it turned out
+            parts.append(f"✅ סיים לעבד את כל החומר ({total} ראיות)")
 
-        parts.append(f"{s.get('evidence_total', 0)} ראיות")
+        parts.append(f"📄 {s.get('indexed', 0)} עם טקסט")
+        if s.get("no_text"):
+            parts.append(f"🚫 {s['no_text']} ללא טקסט")
+        failed = s.get("failed", 0)
+        if failed:
+            # never hide failures behind a green light
+            parts.append(f"⚠️ {failed} נכשלו")
 
         if s.get("llm_available"):
             parts.append(f"🤖 AI זמין ({s.get('llm_model', '')})")
