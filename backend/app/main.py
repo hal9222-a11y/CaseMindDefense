@@ -56,9 +56,13 @@ async def lifespan(app: FastAPI):
 
     from app.services.embedding_service import embed_text
     from app.services.evidence_service import resume_pending_indexing
+    from app.services import translation_worker
 
     threading.Thread(target=lambda: embed_text("warmup", kind="query"), daemon=True).start()
     threading.Thread(target=resume_pending_indexing, daemon=True).start()
+    # keeps translating foreign evidence for as long as the backend runs, so the
+    # material is ready before the user opens it (a chat export takes ~an hour)
+    translation_worker.start()
     yield
 
 app = FastAPI(title="CaseMind Defense API", version="0.15-alpha", lifespan=lifespan)

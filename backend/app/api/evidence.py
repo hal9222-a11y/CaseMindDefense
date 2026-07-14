@@ -190,4 +190,7 @@ def get_evidence_content(
         "filename": ev.filename,
         "mime_type": ev.mime_type,
         "text": path.read_text(encoding="utf-8", errors="replace"),
+        # precomputed by the background worker — instant, no waiting on the LLM
+        "translation": ev.translation or "",
+        "translation_status": ev.translation_status or "",
     }

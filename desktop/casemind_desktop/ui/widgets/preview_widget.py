@@ -39,6 +39,7 @@ class PreviewWidget(QWidget):
         self._current_id: int | None = None
         self._highlight: str | None = None
         self._current_text: str = ""
+        self._ready_translation: str = ""
         self._translating_selection = False
 
         self._text_view = QTextEdit()
@@ -109,7 +110,16 @@ class PreviewWidget(QWidget):
         if payload.get("id") != self._current_id:
             return  # a different row was selected while this request was in flight
         self._current_text = payload.get("text", "")
-        self._text_view.setPlainText(self._current_text)
+        self._ready_translation = payload.get("translation", "")
+
+        if self._ready_translation:
+            # the background worker already did this — show it with no wait
+            self._text_view.setPlainText(
+                f"[תרגום לעברית — הוכן מראש ברקע]\n{self._ready_translation}"
+                f"\n\n———\n[מקור]\n{self._current_text}"
+            )
+        else:
+            self._text_view.setPlainText(self._current_text)
         self._translate_button.setEnabled(bool(self._current_text.strip()))
         self._stack.setCurrentIndex(1)
         if self._highlight:

@@ -59,6 +59,13 @@ class StatusBarWidget(QStatusBar):
             # never hide failures behind a green light
             parts.append(f"⚠️ {failed} נכשלו")
 
+        # the machine works ahead of the user: show the translation backlog
+        pending = s.get("to_translate", 0)
+        if pending:
+            parts.append(f"🌐 מתרגם ברקע — נותרו {pending}")
+        elif s.get("translated"):
+            parts.append(f"🌐 {s['translated']} מתורגמים")
+
         if s.get("llm_available"):
             parts.append(f"🤖 AI זמין ({s.get('llm_model', '')})")
         else:

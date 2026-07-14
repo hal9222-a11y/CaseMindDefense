@@ -51,6 +51,18 @@ def status(session: Session = Depends(get_session)):
     ).one()
     failed = total - processing - indexed - empty
 
+    # background translation backlog: how much foreign material is still being
+    # prepared, so the user can see the machine is working ahead of them
+    translated = session.exec(
+        select(func.count()).select_from(Evidence)
+        .where(Evidence.translation_status == "done")
+    ).one()
+    to_translate = session.exec(
+        select(func.count()).select_from(Evidence)
+        .where(Evidence.translation_status == "")
+        .where(Evidence.status.not_in(("processing", "imported")))
+    ).one()
+
     current = None
     if processing:
         # oldest still-processing item = the one the sequential indexer is on
@@ -69,6 +81,8 @@ def status(session: Session = Depends(get_session)):
         "indexed": indexed,
         "no_text": empty,
         "failed": failed,
+        "translated": translated,
+        "to_translate": to_translate,
         "llm_available": llm_service.ollama_available(),
         "llm_model": llm_service.active_model(),
     }

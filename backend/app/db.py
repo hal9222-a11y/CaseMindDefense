@@ -47,6 +47,8 @@ _MIGRATIONS = {
     },
     "evidence": {
         "case_id": "INTEGER",
+        "translation_status": "TEXT NOT NULL DEFAULT ''",
+        "translation": "TEXT NOT NULL DEFAULT ''",
     },
     "auditevent": {
         "prev_hash": "TEXT NOT NULL DEFAULT ''",

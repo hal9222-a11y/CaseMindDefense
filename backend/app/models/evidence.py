@@ -25,6 +25,12 @@ class Evidence(SQLModel, table=True):
     mime_type: str = "application/octet-stream"
     imported_at: datetime = Field(default_factory=utcnow)
     status: str = "imported"
+    # Hebrew translation, precomputed in the background: a local model manages
+    # ~14 chars/sec, so a chat export takes an hour — it must be ready before
+    # the user opens the file, not while they wait for it.
+    # "" = not looked at yet | pending | done | not_needed | failed
+    translation_status: str = ""
+    translation: str = ""
 
 
 class EvidenceChunk(SQLModel, table=True):
