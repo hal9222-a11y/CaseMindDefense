@@ -4,6 +4,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QStatusBar
 
 from api.client import ApiClient
+from backend_launcher import ensure_backend
 from workers.api_worker import run_async
 
 POLL_MS = 4000  # how often to refresh the activity indicator
@@ -12,11 +13,16 @@ POLL_MS = 4000  # how often to refresh the activity indicator
 class StatusBarWidget(QStatusBar):
     """Live activity indicator: shows that the backend is up, whether the AI
     is ready, and what the system is doing right now (idle / processing N
-    files). Polls /status so the user always knows the system is working."""
+    files). Polls /status so the user always knows the system is working.
+
+    It also brings the backend back if it dies. ensure_backend() only ran once,
+    at launch, so a backend that died mid-session left the app throwing errors
+    at the user until they restarted it themselves."""
 
     def __init__(self, api: ApiClient) -> None:
         super().__init__()
         self.api = api
+        self._reviving = False
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._poll)
 
@@ -29,10 +35,36 @@ class StatusBarWidget(QStatusBar):
     def _poll(self) -> None:
         run_async(self.api.status, on_done=self._on_status)
 
+    def _revive_backend(self) -> None:
+        """Restart the backend the moment it goes missing, rather than leaving
+        the user to close and reopen the app. ensure_backend() is a no-op when
+        the backend answers, so the only guard needed is against launching a
+        second one while the first is still coming up."""
+        if self._reviving:
+            self.showMessage("🟠 השרת נפל — מפעיל אותו מחדש…")
+            return
+        self._reviving = True
+        self.showMessage("🟠 השרת נפל — מפעיל אותו מחדש…")
+        run_async(ensure_backend, on_done=self._on_revived, on_error=self._on_revive_failed)
+
+    def _on_revived(self, started: bool) -> None:
+        self._reviving = False
+        if started:
+            self._poll()  # show the real state immediately
+        else:
+            self.showMessage(
+                "🔴 לא הצלחתי להפעיל את השרת מחדש — הפעל מחדש את האפליקציה."
+            )
+
+    def _on_revive_failed(self, error: str) -> None:
+        self._reviving = False
+        self.showMessage(f"🔴 השרת אינו זמין — {error}")
+
     def _on_status(self, s: dict) -> None:
         if not s.get("ok"):
-            self.showMessage(f"🔴 השרת אינו זמין — {s.get('error', '')}")
+            self._revive_backend()
             return
+        self._reviving = False
 
         total = s.get("evidence_total", 0)
         parts = []
