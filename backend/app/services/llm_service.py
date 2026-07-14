@@ -14,6 +14,13 @@ logger = logging.getLogger(__name__)
 OLLAMA_URL = os.getenv("CASEMIND_OLLAMA_URL", "http://127.0.0.1:11434")
 LLM_TIMEOUT_SECONDS = int(os.getenv("CASEMIND_LLM_TIMEOUT", "120"))
 
+# "ollama" (local, private — default) or "gemini" (cloud, fast, sends text to
+# Google). Gemini is opt-in: the evidence leaves the machine, so the user turns
+# it on deliberately.
+LLM_PROVIDER = os.getenv("CASEMIND_LLM_PROVIDER", "ollama").lower()
+GEMINI_API_KEY = os.getenv("CASEMIND_GEMINI_API_KEY") or None
+GEMINI_MODEL = os.getenv("CASEMIND_GEMINI_MODEL", "gemini-2.0-flash")
+
 # The app auto-selects the best general chat model actually installed in Ollama,
 # so a machine with capable models uses them without configuration. Set
 # CASEMIND_LLM_MODEL to force a specific model instead.
@@ -86,9 +93,13 @@ def _pick_model(installed: list[dict]) -> str | None:
 
 
 def active_model() -> str | None:
-    """The Ollama model the app will use, auto-selected from what's installed
-    (or CASEMIND_LLM_MODEL when set). None when Ollama is down / has no model.
-    Cached briefly since the status bar polls often."""
+    """The model the app will use. For Gemini (cloud) that is simply the
+    configured Gemini model when a key is present. Otherwise the Ollama model
+    auto-selected from what's installed (or CASEMIND_LLM_MODEL when set). None
+    when no model is available. Cached briefly since the status bar polls often."""
+    if LLM_PROVIDER == "gemini":
+        return GEMINI_MODEL if GEMINI_API_KEY else None
+
     now = time.monotonic()
     if now - float(_model_cache["ts"]) < _MODEL_TTL:
         return _model_cache["model"]  # type: ignore[return-value]
@@ -333,6 +344,15 @@ def _chat(messages: list[dict]) -> str | None:
 
 
 def _chat_call(model: str, messages: list[dict]) -> str | None:
+    # one dispatch point for every LLM call. Default is local Ollama (evidence
+    # never leaves the machine). Gemini is opt-in and sends the text to Google —
+    # a privacy trade-off the user makes deliberately, for cloud speed.
+    if LLM_PROVIDER == "gemini":
+        return _gemini_call(messages)
+    return _ollama_call(model, messages)
+
+
+def _ollama_call(model: str, messages: list[dict]) -> str | None:
     payload = {
         "model": model,
         "stream": False,
@@ -350,6 +370,43 @@ def _chat_call(model: str, messages: list[dict]) -> str | None:
         return (body.get("message", {}).get("content") or "").strip() or None
     except Exception as exc:
         logger.warning("LLM call failed: %s", exc)
+        return None
+
+
+def _gemini_call(messages: list[dict]) -> str | None:
+    """Google Gemini via REST. Cloud — the text leaves the machine. Opt-in only.
+
+    Same message shape as the Ollama path (system + user turns); Gemini wants the
+    system turn as systemInstruction and the rest under contents.
+    """
+    if not GEMINI_API_KEY:
+        logger.warning("Gemini selected but CASEMIND_GEMINI_API_KEY is not set")
+        return None
+
+    system = "\n".join(m["content"] for m in messages if m["role"] == "system")
+    contents = [
+        {"role": "user", "parts": [{"text": m["content"]}]}
+        for m in messages if m["role"] != "system"
+    ]
+    payload: dict = {"contents": contents, "generationConfig": {"temperature": 0.1}}
+    if system:
+        payload["systemInstruction"] = {"parts": [{"text": system}]}
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+    )
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_SECONDS) as resp:
+            body = json.load(resp)
+        parts = body["candidates"][0]["content"]["parts"]
+        return "".join(p.get("text", "") for p in parts).strip() or None
+    except Exception as exc:
+        logger.warning("Gemini call failed: %s", exc)
         return None
 
 

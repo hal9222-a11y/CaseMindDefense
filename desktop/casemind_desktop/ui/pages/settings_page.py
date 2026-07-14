@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -33,6 +34,27 @@ class SettingsPage(QWidget):
         )
         info.setStyleSheet("color: #9CA3AF;")
 
+        # which LLM is doing AI answers and translation, and how to switch it.
+        # The status bar shows the live model; this explains the choice.
+        provider = os.getenv("CASEMIND_LLM_PROVIDER", "ollama").lower()
+        if provider == "gemini":
+            llm_line = (
+                "🤖 מנוע AI: <b>Gemini (ענן)</b> — מהיר, אך חומרי החקירה נשלחים "
+                "לשרתי Google. לחזרה למקומי: הסר את CASEMIND_LLM_PROVIDER."
+            )
+        else:
+            llm_line = (
+                "🤖 מנוע AI: <b>מקומי (Ollama)</b> — חומרי החקירה לא יוצאים מהמחשב.<br>"
+                "להאצת תרגום דרך הענן (Gemini): הגדר "
+                "<code>CASEMIND_LLM_PROVIDER=gemini</code> ו-"
+                "<code>CASEMIND_GEMINI_API_KEY=…</code> על השרת.<br>"
+                "⚠️ שים לב: זה שולח את חומרי החקירה ל-Google. שקול היטב בתיק פלילי."
+            )
+        llm_info = QLabel(llm_line)
+        llm_info.setWordWrap(True)
+        llm_info.setTextFormat(Qt.RichText)
+        llm_info.setStyleSheet("color: #9CA3AF; padding-top: 6px;")
+
         self.verify_button = QPushButton("Verify Evidence Integrity")
         self.backup_button = QPushButton("Create Backup")
         self.verify_button.clicked.connect(self._verify)
@@ -50,6 +72,7 @@ class SettingsPage(QWidget):
         layout = QVBoxLayout()
         layout.addWidget(title)
         layout.addWidget(info)
+        layout.addWidget(llm_info)
         layout.addLayout(actions)
         layout.addWidget(self.output)
         self.setLayout(layout)

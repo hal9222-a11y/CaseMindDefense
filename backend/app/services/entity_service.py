@@ -60,7 +60,36 @@ def mask_phones(text: str) -> str:
             masked[i] = " "
     return "".join(masked)
 ISRAELI_ID_RE = re.compile(r"\b\d{9}\b")
-VEHICLE_PLATE_RE = re.compile(r"\b\d{2,3}[-\s]?\d{2,3}[-\s]?\d{2,3}\b")
+
+# An Israeli plate is 7 digits (NN-NNN-NN) or 8 (NNN-NN-NNN) — never 9. The old
+# pattern was \d{2,3}-\d{2,3}-\d{2,3}, which swallowed any run of 9 digits, so
+# every ID number was also reported as a vehicle plate. (?<!\d)/(?!\d) stop it
+# from biting a slice out of a longer number.
+VEHICLE_PLATE_RE = re.compile(
+    r"(?<!\d)(?:\d{2}[-\s]?\d{3}[-\s]?\d{2}|\d{3}[-\s]?\d{2}[-\s]?\d{3})(?!\d)"
+)
+
+# 8 digits that are really a date — every "vehicle plate" found in the real case
+# was one of these, lifted out of a WhatsApp filename (IMG-20210705-WA0001.jpg).
+DATE_DIGITS_RE = re.compile(r"^(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$")
+
+
+def looks_like_a_date(digits: str) -> bool:
+    return bool(DATE_DIGITS_RE.match(digits.replace("-", "").replace(" ", "")))
+
+
+def valid_israeli_id(value: str) -> bool:
+    """An Israeli ID carries a check digit. Without verifying it, any nine
+    digits in the text were reported as somebody's ID — half of the ones found
+    in the real case were junk (900000000, 800708974...)."""
+    digits = value.strip()
+    if not digits.isdigit() or len(digits) != 9:
+        return False
+    total = 0
+    for index, char in enumerate(digits):
+        doubled = int(char) * (1 if index % 2 == 0 else 2)
+        total += doubled if doubled < 10 else doubled - 9
+    return total % 10 == 0
 
 HEBREW_STOPWORDS = {
     "אני", "אתה", "את", "הוא", "היא", "אנחנו", "אתם", "אתן", "הם", "הן",

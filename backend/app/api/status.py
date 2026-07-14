@@ -85,4 +85,5 @@ def status(session: Session = Depends(get_session)):
         "to_translate": to_translate,
         "llm_available": llm_service.ollama_available(),
         "llm_model": llm_service.active_model(),
+        "llm_provider": llm_service.LLM_PROVIDER,  # "ollama" (local) or "gemini" (cloud)
     }

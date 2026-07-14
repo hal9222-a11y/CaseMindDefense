@@ -49,8 +49,14 @@ def log_event(session: Session, event_type: str, evidence_id: int | None = None,
 
 
 def verify_audit_chain(session: Session) -> dict:
-    """Walk the chain; recompute every hash. Legacy events (before the
-    chain existed) have empty hashes and are only counted."""
+    """Walk the chain; recompute every hash.
+
+    Legacy events (recorded before the chain existed) have no hash and cannot be
+    verified — nothing detects a change to them. We report that honestly: ok is
+    True only when the ENTIRE trail is verified. Saying ok while a slice of the
+    log is unprotected is a false assurance in a tool whose job is tamper
+    evidence — a doctored legacy record returned ok=True before this.
+    """
     events = session.exec(select(AuditEvent).order_by(AuditEvent.id)).all()
 
     legacy = 0
@@ -64,11 +70,19 @@ def verify_audit_chain(session: Session) -> dict:
         if event.event_hash != expected or event.prev_hash != prev_hash:
             return {
                 "ok": False,
+                "reason": "tampered",
                 "broken_at_id": event.id,
                 "checked": checked,
-                "legacy_unhashed": legacy,
+                "legacy_unverifiable": legacy,
             }
         prev_hash = event.event_hash
         checked += 1
 
-    return {"ok": True, "broken_at_id": None, "checked": checked, "legacy_unhashed": legacy}
+    fully_verified = legacy == 0
+    return {
+        "ok": fully_verified,
+        "reason": None if fully_verified else "unverifiable_legacy_records",
+        "broken_at_id": None,
+        "checked": checked,
+        "legacy_unverifiable": legacy,
+    }

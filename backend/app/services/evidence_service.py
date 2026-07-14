@@ -80,12 +80,7 @@ def register_evidence(session: Session, source_path: str, case_id: int | None = 
     return evidence
 
 
-def index_evidence(session: Session, evidence_id: int) -> Evidence:
-    """Extract text, chunk, embed. Replaces any existing chunks (reindex-safe)."""
-    evidence = session.get(Evidence, evidence_id)
-    if evidence is None:
-        raise ValueError(f"evidence {evidence_id} not found")
-
+def _drop_old_index(session: Session, evidence_id: int) -> None:
     for old_chunk in session.exec(
         select(EvidenceChunk).where(EvidenceChunk.evidence_id == evidence_id)
     ).all():
@@ -94,7 +89,21 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
         select(ExtractedEntity).where(ExtractedEntity.evidence_id == evidence_id)
     ).all():
         session.delete(old_entity)
-    session.commit()
+
+
+def index_evidence(session: Session, evidence_id: int) -> Evidence:
+    """Extract text, chunk, embed. Replaces any existing chunks (reindex-safe).
+
+    The old index is dropped only once the new one is ready, in the same
+    transaction. Deleting it up-front left the evidence with ZERO chunks for as
+    long as OCR or transcription took — minutes — during which it was invisible
+    to search, the timeline and the AI. A lawyer searching in that window would
+    be told the material is not in the case, which is the same lie as a search
+    that invents evidence, pointing the other way.
+    """
+    evidence = session.get(Evidence, evidence_id)
+    if evidence is None:
+        raise ValueError(f"evidence {evidence_id} not found")
 
     stored = Path(evidence.stored_path)
 
@@ -129,21 +138,27 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
         else:
             chunks = chunk_text_with_offsets(text)
 
+    # Build the whole new index in memory FIRST. Embedding and NER are the slow
+    # part, and the evidence must stay searchable while they run.
+    new_chunks: list[EvidenceChunk] = []
+    new_entities: list[ExtractedEntity] = []
+
     for idx, chunk_data in enumerate(chunks):
         chunk_text = chunk_data.get("text") or ""
         if not chunk_text.strip():
             continue
         vec = embed_text(chunk_text)
-        ev_chunk = EvidenceChunk(
-            evidence_id=evidence.id,
-            chunk_index=idx,
-            text=chunk_text,
-            source_location=chunk_data.get("source_location") or f"chunk:{idx}",
-            embedding=serialize_embedding(vec),
-            embedding_model=embedding_model_name(),
-            embedding_dimension=len(vec),
+        new_chunks.append(
+            EvidenceChunk(
+                evidence_id=evidence.id,
+                chunk_index=idx,
+                text=chunk_text,
+                source_location=chunk_data.get("source_location") or f"chunk:{idx}",
+                embedding=serialize_embedding(vec),
+                embedding_model=embedding_model_name(),
+                embedding_dimension=len(vec),
+            )
         )
-        session.add(ev_chunk)
 
         found = extract_entities(chunk_text)
 
@@ -160,7 +175,7 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
             if key in seen:
                 continue
             seen.add(key)
-            session.add(
+            new_entities.append(
                 ExtractedEntity(
                     evidence_id=evidence.id,
                     chunk_index=idx,
@@ -168,6 +183,14 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
                     label=entity["label"],
                 )
             )
+
+    # Swap old for new in one transaction: the evidence is never chunk-less, so
+    # a search running right now cannot be told the material is not in the case.
+    _drop_old_index(session, evidence_id)
+    for chunk in new_chunks:
+        session.add(chunk)
+    for entity in new_entities:
+        session.add(entity)
 
     if chunks:
         evidence.status = {

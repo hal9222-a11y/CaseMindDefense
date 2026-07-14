@@ -13,7 +13,9 @@ from app.services.entity_service import (
     VEHICLE_PLATE_RE,
     extract_phones,
     is_noise_name,
+    looks_like_a_date,
     mask_phones,
+    valid_israeli_id,
 )
 from app.services.russian_ner import extract_russian_entities
 
@@ -67,7 +69,13 @@ def extract_entities(text: str) -> list[dict]:
                 if len(word) < 2 or float(ent.get("score", 0.0)) < NER_MIN_SCORE:
                     continue
                 group = ent.get("entity_group") or ""
-                label = LABEL_MAP.get(group, group.lower() or "other")
+                # Only the categories we actually mean. Falling back to the raw
+                # model code leaked its internal tags to the user as entity
+                # types — "duc", "ang", "misc" — carrying values like "ip",
+                # "mn" and ". 2". Noise dressed up as findings.
+                label = LABEL_MAP.get(group)
+                if label is None:
+                    continue
                 entities.append({"text": word, "label": label})
         except Exception as exc:
             logger.warning("NER inference failed on chunk: %s", exc)
@@ -94,9 +102,13 @@ def extract_entities(text: str) -> list[dict]:
     # and inside dates in filenames. Blank out what is already a phone first.
     remaining = mask_phones(text)
     for israeli_id in ISRAELI_ID_RE.findall(remaining):
-        entities.append({"text": israeli_id, "label": "israeli_id"})
+        # verify the check digit: half the "IDs" found in the real case were junk
+        if valid_israeli_id(israeli_id):
+            entities.append({"text": israeli_id, "label": "israeli_id"})
     for plate in VEHICLE_PLATE_RE.findall(remaining):
-        entities.append({"text": plate, "label": "vehicle_plate"})
+        # every "plate" in the real case was a date out of a WhatsApp filename
+        if not looks_like_a_date(plate):
+            entities.append({"text": plate, "label": "vehicle_plate"})
 
     if ner is None:
         for entity in LATIN_ENTITY_RE.findall(text):
