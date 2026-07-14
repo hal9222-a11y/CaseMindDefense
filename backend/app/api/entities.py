@@ -6,7 +6,7 @@ from sqlmodel import Session
 
 from app.db import get_session
 from app.services import llm_service
-from app.services.entity_service import entity_graph, list_entities
+from app.services.entity_service import IDENTIFIER_LABELS, entity_graph, list_entities
 
 router = APIRouter(prefix="/entities", tags=["entities"])
 
@@ -54,6 +54,27 @@ def hebrew_names(req: HebrewNamesRequest):
 def graph(
     max_nodes: int = Query(30, ge=2, le=100),
     case_id: int | None = Query(None),
+    only_people: bool = Query(
+        True, description="hide phones/IDs/plates (people, places and orgs stay)"
+    ),
+    min_count: int = Query(1, ge=1, description="minimum mentions for a node"),
+    min_edge_weight: int = Query(
+        2, ge=1, description="edge only if the pair shares this many passages"
+    ),
+    max_edges_per_node: int = Query(
+        3, ge=1, le=10, description="keep only each entity's strongest links"
+    ),
     session: Session = Depends(get_session),
 ):
-    return entity_graph(session, max_nodes=max_nodes, case_id=case_id)
+    """Co-occurrence graph. Defaults are tuned to be readable: names only, links
+    measured per passage (not per file — one chat contains everyone), and only
+    each entity's strongest links kept, otherwise the graph is a hairball."""
+    return entity_graph(
+        session,
+        max_nodes=max_nodes,
+        case_id=case_id,
+        exclude_types=IDENTIFIER_LABELS if only_people else None,
+        min_count=min_count,
+        min_edge_weight=min_edge_weight,
+        max_edges_per_node=max_edges_per_node,
+    )

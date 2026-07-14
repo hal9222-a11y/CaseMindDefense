@@ -229,10 +229,21 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
-    def entity_graph(self, max_nodes: int = 30) -> dict[str, Any]:
+    def entity_graph(
+        self,
+        max_nodes: int = 30,
+        only_people: bool = True,
+        min_edge_weight: int = 2,
+        max_edges_per_node: int = 3,
+    ) -> dict[str, Any]:
         response = self._session.get(
             self._url(endpoints.ENTITY_GRAPH),
-            params=self._scoped({"max_nodes": max_nodes}),
+            params=self._scoped({
+                "max_nodes": max_nodes,
+                "only_people": only_people,
+                "min_edge_weight": min_edge_weight,
+                "max_edges_per_node": max_edges_per_node,
+            }),
             timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()

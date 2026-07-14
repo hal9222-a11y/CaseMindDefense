@@ -5,6 +5,7 @@ import math
 from PySide6.QtCore import QPointF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QGraphicsEllipseItem,
     QGraphicsScene,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -56,14 +58,49 @@ class GraphPage(QWidget):
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.clicked.connect(self.refresh)
 
+        # --- controls: without these the graph is a hairball nobody can read ---
+        self.people_only = QCheckBox("ללא טלפונים/ת.ז")
+        self.people_only.setChecked(True)
+        self.people_only.setToolTip("הסתר טלפונים / ת.ז / מספרי רכב — הצג רק אנשים")
+        self.people_only.stateChanged.connect(self.refresh)
+
+        self.nodes_spin = QSpinBox()
+        self.nodes_spin.setRange(5, 60)
+        self.nodes_spin.setValue(20)
+        self.nodes_spin.setPrefix("אנשים: ")
+        self.nodes_spin.setToolTip("כמה שמות להציג (הנפוצים ביותר)")
+        self.nodes_spin.valueChanged.connect(self.refresh)
+
+        self.links_spin = QSpinBox()
+        self.links_spin.setRange(1, 10)
+        self.links_spin.setValue(3)
+        self.links_spin.setPrefix("קשרים לאדם: ")
+        self.links_spin.setToolTip(
+            "כמה קשרים חזקים להציג לכל אדם. גבוה מדי = רשת בלתי קריאה"
+        )
+        self.links_spin.valueChanged.connect(self.refresh)
+
+        self.strength_spin = QSpinBox()
+        self.strength_spin.setRange(1, 50)
+        self.strength_spin.setValue(2)
+        self.strength_spin.setPrefix("מינימום משפטים: ")
+        self.strength_spin.setToolTip("קשר ייווצר רק אם השניים מוזכרים יחד בכל כך הרבה משפטים")
+        self.strength_spin.valueChanged.connect(self.refresh)
+
+        self._entity_controls = [
+            self.people_only, self.nodes_spin, self.links_spin, self.strength_spin,
+        ]
+
         title = QLabel("Graph")
         title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        self.legend = QLabel("size = mentions · edge = shared evidence · double-click = search")
+        self.legend = QLabel("גודל = אזכורים · קו = הוזכרו באותו משפט · double-click = חיפוש")
         self.legend.setStyleSheet("color: #9CA3AF;")
 
         top_bar = QHBoxLayout()
         top_bar.addWidget(title)
         top_bar.addWidget(self.mode_selector)
+        for control in self._entity_controls:
+            top_bar.addWidget(control)
         top_bar.addWidget(self.legend)
         top_bar.addStretch()
         top_bar.addWidget(self.refresh_button)
@@ -84,10 +121,13 @@ class GraphPage(QWidget):
 
     def _on_mode_changed(self, _index: int) -> None:
         people = self._mode() == "people"
+        # the tuning controls only apply to the co-occurrence graph
+        for control in self._entity_controls:
+            control.setVisible(not people)
         self.legend.setText(
             "אנשים · קו = קשר (אח / אבא של…) · double-click = חיפוש"
             if people
-            else "size = mentions · edge = shared evidence · double-click = search"
+            else "גודל = אזכורים · קו = הוזכרו באותו משפט · double-click = חיפוש"
         )
         self.refresh()
 
@@ -102,7 +142,14 @@ class GraphPage(QWidget):
             run_async(self.api.person_graph, self.api.current_case_id,
                       on_done=self._on_people_loaded, on_error=self._on_failed)
         else:
-            run_async(self.api.entity_graph, on_done=self._on_loaded, on_error=self._on_failed)
+            run_async(
+                self.api.entity_graph,
+                max_nodes=self.nodes_spin.value(),
+                only_people=self.people_only.isChecked(),
+                min_edge_weight=self.strength_spin.value(),
+                max_edges_per_node=self.links_spin.value(),
+                on_done=self._on_loaded, on_error=self._on_failed,
+            )
 
     def reset(self) -> None:
         """Force a reload next time shown (used when the case scope changes)."""

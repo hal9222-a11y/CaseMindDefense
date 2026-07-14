@@ -43,6 +43,7 @@ RUSSIAN_STOPWORDS = {
     "короче", "блин", "значит", "кстати", "вообще", "наверное", "кажется",
     "понятно", "точно", "честно", "нормально", "спокойно", "интересно",
     "странно", "жаль", "боже", "господи", "правда", "конец", "начало",
+    "пусть", "ясно", "ппц", "посмотри", "помнишь", "представляешь", "хватит",
 }
 
 
@@ -97,35 +98,66 @@ def list_entities(session: Session, case_id: int | None = None) -> list[dict]:
     return _legacy_regex_scan(session) if case_id is None else []
 
 
+# Deterministic pattern matches, not things you reason about in a network.
+# Filtering these out (rather than whitelisting names) keeps locations and
+# organizations, which very much belong in an investigation graph.
+IDENTIFIER_LABELS = {"phone", "israeli_id", "vehicle_plate"}
+
+
 def entity_graph(
-    session: Session, max_nodes: int = 30, max_edges: int = 200, case_id: int | None = None
+    session: Session,
+    max_nodes: int = 30,
+    max_edges: int = 200,
+    case_id: int | None = None,
+    exclude_types: set[str] | None = None,
+    min_count: int = 1,
+    min_edge_weight: int = 1,
+    max_edges_per_node: int = 3,
 ) -> dict:
     """Co-occurrence graph: nodes are the top entities, an edge connects two
-    entities that appear in the same evidence (weight = shared evidence count)."""
+    entities mentioned in the same PASSAGE (weight = how many passages).
+
+    Co-occurrence per file is worthless here: one WhatsApp export contains every
+    participant, so every pair "co-occurs" and the graph is a complete hairball
+    that says nothing. Sharing a passage means they were actually talked about
+    together."""
     from collections import Counter, defaultdict
     from itertools import combinations
 
     from app.models.evidence import ExtractedEntity
 
-    stmt = select(ExtractedEntity.text, ExtractedEntity.label, ExtractedEntity.evidence_id)
+    stmt = select(
+        ExtractedEntity.text,
+        ExtractedEntity.label,
+        ExtractedEntity.evidence_id,
+        ExtractedEntity.chunk_index,
+    )
     if case_id is not None:
         stmt = stmt.where(
             ExtractedEntity.evidence_id.in_(
                 select(Evidence.id).where(Evidence.case_id == case_id)
             )
         )
-    rows = session.exec(stmt).all()
+    rows = [
+        row for row in session.exec(stmt).all()
+        # same noise filter the Entities list uses — the graph was showing
+        # Она/Это/Нет as if they were people
+        if not is_noise_name(row[0]) and (exclude_types is None or row[1] not in exclude_types)
+    ]
 
-    counts: Counter = Counter((text, label) for text, label, _ in rows)
-    top = {key for key, _ in counts.most_common(max_nodes)}
+    counts: Counter = Counter((text, label) for text, label, _, _ in rows)
+    top = {
+        key for key, count in counts.most_common(max_nodes) if count >= min_count
+    }
 
-    entities_by_evidence: dict[int, set] = defaultdict(set)
-    for text, label, evidence_id in rows:
+    # keyed by passage, not by file — see the docstring
+    entities_by_passage: dict[tuple[int, int], set] = defaultdict(set)
+    for text, label, evidence_id, chunk_index in rows:
         if (text, label) in top:
-            entities_by_evidence[evidence_id].add((text, label))
+            entities_by_passage[(evidence_id, chunk_index)].add((text, label))
 
     edge_weights: Counter = Counter()
-    for entities in entities_by_evidence.values():
+    for entities in entities_by_passage.values():
         for a, b in combinations(sorted(entities), 2):
             edge_weights[(a, b)] += 1
 
@@ -133,9 +165,27 @@ def entity_graph(
         {"entity": text, "type": label, "count": counts[(text, label)]}
         for text, label in sorted(top, key=lambda key: -counts[key])
     ]
+    # Keep only each entity's strongest links. A threshold alone cannot fix this:
+    # passages are long enough that most names still co-occur with most others
+    # (94% density), and a near-complete graph shows nothing however it is drawn.
+    # Top-k per node keeps the picture readable and, more importantly, keeps the
+    # link that actually matters for each person.
+    strongest: dict[tuple, list] = defaultdict(list)
+    for pair, weight in edge_weights.most_common():
+        if weight < min_edge_weight:
+            continue
+        a, b = pair
+        strongest[a].append((weight, pair))
+        strongest[b].append((weight, pair))
+
+    kept: set = set()
+    for node, node_edges in strongest.items():
+        for _weight, pair in sorted(node_edges, reverse=True)[:max_edges_per_node]:
+            kept.add(pair)
+
     edges = [
-        {"a": a[0], "b": b[0], "weight": weight}
-        for (a, b), weight in edge_weights.most_common(max_edges)
+        {"a": a[0], "b": b[0], "weight": edge_weights[(a, b)]}
+        for (a, b) in sorted(kept, key=lambda p: -edge_weights[p])[:max_edges]
     ]
     return {"nodes": nodes, "edges": edges}
 
