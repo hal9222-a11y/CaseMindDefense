@@ -7,23 +7,78 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".ogg", ".flac"}
-VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov"}
+# .opus is how WhatsApp stores EVERY voice message. Leaving it out meant a
+# forensic export with 374 voice recordings imported none of them — and the
+# folder import said nothing. In a criminal case those recordings can be the
+# evidence. .amr/.3gp are what older phones and some call recorders produce.
+AUDIO_EXTENSIONS = {
+    ".wav", ".mp3", ".m4a", ".ogg", ".opus", ".flac",
+    ".aac", ".amr", ".3gp", ".3gpp", ".wma", ".webm", ".m4b",
+}
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov", ".3gp", ".webm", ".wmv", ".flv"}
 MEDIA_EXTENSIONS = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
 
 # "small" is multilingual (Hebrew/Russian/English) and CPU-viable.
 # Hebrew-tuned alternative: an ivrit.ai faster-whisper model name.
 WHISPER_MODEL = os.getenv("CASEMIND_WHISPER_MODEL", "small")
-WHISPER_DEVICE = os.getenv("CASEMIND_WHISPER_DEVICE", "cpu")
+# "auto" uses the NVIDIA GPU when present — measured 37x faster (a voice message
+# 26 min on CPU -> 42 s), which is the difference between a case's 374 voice
+# recordings taking a week and taking a night. Force with CASEMIND_WHISPER_DEVICE.
+WHISPER_DEVICE = os.getenv("CASEMIND_WHISPER_DEVICE", "auto")
 CHUNK_TARGET_CHARS = 1000
+
+
+def _enable_cuda_dlls() -> None:
+    """faster-whisper's CUDA runtime (cuBLAS/cuDNN) ships as pip packages under
+    nvidia/*/bin. Those dirs must be on the DLL search path or loading the GPU
+    model fails with 'cublas64_12.dll not found'."""
+    import glob
+
+    base = os.path.join(os.path.dirname(__file__), "..", "..", ".venv",
+                        "Lib", "site-packages", "nvidia")
+    bins = sorted({os.path.dirname(p) for p in glob.glob(
+        os.path.join(base, "**", "*.dll"), recursive=True)})
+    for path in bins:
+        try:
+            os.add_dll_directory(path)
+        except (OSError, AttributeError):
+            pass
+    if bins:
+        os.environ["PATH"] = os.pathsep.join(bins) + os.pathsep + os.environ.get("PATH", "")
+
+
+def _try_load(device: str, compute_type: str):
+    from faster_whisper import WhisperModel
+
+    return WhisperModel(WHISPER_MODEL, device=device, compute_type=compute_type)
 
 
 @lru_cache(maxsize=1)
 def _load_whisper():
-    try:
-        from faster_whisper import WhisperModel
+    # GPU first (float16), CPU (int8) as the fallback — a machine without a
+    # usable GPU still transcribes, just slower.
+    want_gpu = WHISPER_DEVICE in ("auto", "cuda")
+    if want_gpu:
+        try:
+            import ctranslate2
 
-        return WhisperModel(WHISPER_MODEL, device=WHISPER_DEVICE, compute_type="int8")
+            if ctranslate2.get_cuda_device_count() > 0:
+                _enable_cuda_dlls()
+                model = _try_load("cuda", "float16")
+                logger.info("Whisper on GPU (cuda/float16)")
+                return model
+        except Exception as exc:
+            logger.warning("Whisper GPU load failed, falling back to CPU: %s", exc)
+
+    if WHISPER_DEVICE == "cuda":
+        # explicitly asked for GPU and it did not work — do not silently pretend
+        logger.warning("Whisper GPU requested but unavailable; media not transcribed")
+        return None
+
+    try:
+        model = _try_load("cpu", "int8")
+        logger.info("Whisper on CPU (int8)")
+        return model
     except Exception as exc:
         logger.warning("Whisper unavailable, media will not be transcribed: %s", exc)
         return None

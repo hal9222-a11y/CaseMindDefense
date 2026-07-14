@@ -122,10 +122,23 @@ def import_folder_endpoint(
     if not root.exists() or not root.is_dir():
         raise HTTPException(status_code=404, detail="folder not found")
 
-    result = {"scanned": 0, "registered": 0, "duplicates": 0, "errors": []}
+    # Never drop a file in silence. A forensic export of this case held 374
+    # WhatsApp voice messages (.opus); the format was unsupported, every one of
+    # them was skipped without a word, and the lawyer had no way to know the
+    # majority of the evidence never entered the system.
+    result: dict = {
+        "scanned": 0, "registered": 0, "duplicates": 0,
+        "skipped_unsupported": 0, "skipped_by_type": {}, "errors": [],
+    }
     registered_ids: list[int] = []
     for path in root.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        if not path.is_file():
+            continue
+        suffix = path.suffix.lower()
+        if suffix not in SUPPORTED_EXTENSIONS:
+            result["skipped_unsupported"] += 1
+            key = suffix or "(no extension)"
+            result["skipped_by_type"][key] = result["skipped_by_type"].get(key, 0) + 1
             continue
         result["scanned"] += 1
         try:

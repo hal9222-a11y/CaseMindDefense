@@ -119,6 +119,7 @@ class EvidencePage(QWidget):
         self.toolbar.set_busy(True)  # stays busy through the refresh
         self._refresh()
         errors = result.get("errors") or []
+        skipped = result.get("skipped_unsupported", 0)
         message = (
             f"נסרקו: {result.get('scanned', 0)} קבצים\n"
             f"נקלטו: {result.get('registered', 0)}\n"
@@ -126,6 +127,16 @@ class EvidencePage(QWidget):
             f"שגיאות: {len(errors)}\n\n"
             "העיבוד (OCR / תמלול / אינדוקס) רץ ברקע — Refresh יראה התקדמות."
         )
+        # a file that was not imported is evidence that is not in the case; the
+        # user has to be told, not left to assume everything came in
+        if skipped:
+            by_type = result.get("skipped_by_type") or {}
+            detail = ", ".join(f"{ext} ×{n}" for ext, n in sorted(
+                by_type.items(), key=lambda kv: -kv[1])[:6])
+            message += (
+                f"\n\n⚠️ {skipped} קבצים לא נקלטו — סוג קובץ לא נתמך:\n{detail}\n"
+                "הקבצים האלה אינם בתיק. בדוק אם הם רלוונטיים לחקירה."
+            )
         if errors:
             message += "\n\nשגיאות ראשונות:\n" + "\n".join(
                 f"- {e.get('path', '')}: {e.get('error', '')}" for e in errors[:5]
