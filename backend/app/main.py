@@ -68,6 +68,17 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="CaseMind Defense API", version="0.15-alpha", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def _track_user_activity(request: Request, call_next):
+    # while someone is using the app, the background translator stands down —
+    # otherwise their question queues behind hours of batch work
+    if request.url.path not in ("/status", "/health"):
+        from app.services import llm_service
+
+        llm_service.note_user_activity()
+    return await call_next(request)
+
+
 @app.exception_handler(Exception)
 async def _log_unhandled(request: Request, exc: Exception) -> JSONResponse:
     # request-level 500s otherwise vanish into uvicorn's stderr (a hidden

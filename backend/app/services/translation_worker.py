@@ -40,46 +40,67 @@ def _evidence_text(session: Session, evidence_id: int) -> str:
 
 
 def _next_untranslated(session: Session) -> Evidence | None:
-    """Oldest indexed evidence that has never been looked at for translation."""
+    """Next document to work on: one already part-way through (finish it before
+    starting anything new), else the oldest never looked at."""
     return session.exec(
         select(Evidence)
-        .where(Evidence.translation_status == "")
+        .where(Evidence.translation_status.in_(("", "pending")))
         .where(Evidence.status.not_in(("processing", "imported")))
-        .order_by(Evidence.id)
+        .order_by(Evidence.translation_status.desc(), Evidence.id)  # "pending" first
         .limit(1)
     ).first()
 
 
 def translate_one(session: Session, evidence: Evidence) -> str:
     """Translate one document to Hebrew and store it. Returns the new status.
-    Documents that are not foreign are marked not_needed so we never look
-    at them again."""
+
+    Progress is committed after every chunk. A 83k-char chat takes far longer
+    than the gap between restarts, so translating it in one shot meant it was
+    started from scratch every time and never finished. Now a restart resumes
+    where it stopped.
+
+    Between chunks the worker waits for any user-facing LLM call to finish:
+    Ollama serves one request at a time, and a user's question must not sit
+    behind hours of background work.
+    """
     text = _evidence_text(session, evidence.id)
     cyrillic = len(CYRILLIC_RE.findall(text))
     if cyrillic < MIN_CYRILLIC_CHARS:
         evidence.translation_status = "not_needed"
-    else:
-        logger.info(
-            "translating %s (%s chars, %s cyrillic)", evidence.filename, len(text), cyrillic
-        )
-        started = time.monotonic()
-        # no size cap here on purpose: this is the slow path the user is not
-        # waiting on, and it is chunked internally
-        hebrew = llm_service.translate(text)
-        if hebrew:
-            evidence.translation = hebrew
-            evidence.translation_status = "done"
-            logger.info(
-                "translated %s in %.0fs", evidence.filename, time.monotonic() - started
-            )
-        else:
-            # LLM down or failed — leave it unclaimed so it is retried later
-            evidence.translation_status = ""
+        session.add(evidence)
+        session.commit()
+        return evidence.translation_status
+
+    chunks = llm_service.split_for_translation(text)
+    done = evidence.translation_chunks_done or 0
+    if done == 0:
+        evidence.translation = ""
+    logger.info(
+        "translating %s (%s chars, %s chunks, resuming at %s)",
+        evidence.filename, len(text), len(chunks), done,
+    )
+    started = time.monotonic()
+
+    for index in range(done, len(chunks)):
+        llm_service.wait_until_user_idle()  # the user always goes first
+        piece = llm_service.translate_chunk(chunks[index])
+        if piece is None:
+            # LLM down / failed: keep the progress made, retry the rest later
+            session.add(evidence)
+            session.commit()
             return "failed"
 
+        evidence.translation = (evidence.translation or "") + ("\n" if index else "") + piece
+        evidence.translation_chunks_done = index + 1
+        evidence.translation_status = "pending"
+        session.add(evidence)
+        session.commit()  # survive a restart
+
+    evidence.translation_status = "done"
     session.add(evidence)
     session.commit()
-    return evidence.translation_status
+    logger.info("translated %s in %.0fs", evidence.filename, time.monotonic() - started)
+    return "done"
 
 
 def run_forever() -> None:
@@ -87,6 +108,7 @@ def run_forever() -> None:
     evidence for as long as the backend runs, so an hour-long translation is
     already done by the time the file is opened. Sequential by design — the
     local model is the bottleneck and running two at once helps nobody."""
+    llm_service.mark_background()  # this thread's LLM calls yield to the user
     while True:
         try:
             with Session(get_engine()) as session:

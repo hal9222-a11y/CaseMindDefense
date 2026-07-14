@@ -28,9 +28,12 @@ class Evidence(SQLModel, table=True):
     # Hebrew translation, precomputed in the background: a local model manages
     # ~14 chars/sec, so a chat export takes an hour — it must be ready before
     # the user opens the file, not while they wait for it.
-    # "" = not looked at yet | pending | done | not_needed | failed
+    # "" = not looked at yet | pending (part-way) | done | not_needed
     translation_status: str = ""
     translation: str = ""
+    # chunks already translated — a long document survives a restart instead of
+    # starting over (and therefore never finishing)
+    translation_chunks_done: int = 0
 
 
 class EvidenceChunk(SQLModel, table=True):

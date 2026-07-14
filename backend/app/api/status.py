@@ -59,7 +59,7 @@ def status(session: Session = Depends(get_session)):
     ).one()
     to_translate = session.exec(
         select(func.count()).select_from(Evidence)
-        .where(Evidence.translation_status == "")
+        .where(Evidence.translation_status.in_(("", "pending")))
         .where(Evidence.status.not_in(("processing", "imported")))
     ).one()
 

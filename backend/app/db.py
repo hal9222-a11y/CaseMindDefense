@@ -49,6 +49,7 @@ _MIGRATIONS = {
         "case_id": "INTEGER",
         "translation_status": "TEXT NOT NULL DEFAULT ''",
         "translation": "TEXT NOT NULL DEFAULT ''",
+        "translation_chunks_done": "INTEGER NOT NULL DEFAULT 0",
     },
     "auditevent": {
         "prev_hash": "TEXT NOT NULL DEFAULT ''",

@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -151,7 +152,7 @@ def translate(text: str, target: str = "Hebrew") -> str | None:
 
     pieces: list[str] = []
     for i, chunk in enumerate(_split_for_translation(text)):
-        out = _chat([system, {"role": "user", "content": chunk}])
+        out = translate_chunk(chunk, target)
         if out is None:
             if i == 0:
                 return None  # LLM unavailable — caller falls back to an error
@@ -162,6 +163,36 @@ def translate(text: str, target: str = "Hebrew") -> str | None:
             continue
         pieces.append(out)
     return "\n".join(pieces)
+
+
+def translate_chunk(chunk: str, target: str = "Hebrew") -> str | None:
+    """One chunk, one LLM call. Exposed so the background worker can save
+    progress after each piece instead of losing hours of work on a restart."""
+    return _chat([
+        {
+            "role": "system",
+            "content": (
+                f"You are a professional legal translator. Translate the user's "
+                f"text into {target}. Output ONLY the translation — no notes, no "
+                f"transliteration in brackets, no original text. Render personal "
+                f"and place names in {target} script. Keep line breaks, timestamps, "
+                f"phone numbers and speaker names in place."
+            ),
+        },
+        {"role": "user", "content": chunk},
+    ])
+
+
+# The background worker uses small pieces on purpose. Ollama serves one request
+# at a time, so whatever the worker has in flight is exactly how long a user can
+# be stuck waiting. At ~14 chars/sec a 2500-char chunk stalls them for ~3
+# minutes; 700 keeps the worst case under a minute. On-demand translation, where
+# the user is already waiting, keeps the larger chunks (fewer round-trips).
+BACKGROUND_CHUNK_CHARS = int(os.getenv("CASEMIND_BG_CHUNK_CHARS", "700"))
+
+
+def split_for_translation(text: str) -> list[str]:
+    return _split_for_translation(text, limit=BACKGROUND_CHUNK_CHARS)
 
 
 def to_hebrew_name(name: str) -> str | None:
@@ -236,10 +267,72 @@ def _has_prose(answer: str) -> bool:
     return bool(_WORD_RE.search(without_citations))
 
 
+# Ollama serves one request at a time per model. The background translator would
+# otherwise hold it for hours, and a user's question would sit behind it — a
+# trivial call measured 219s while the worker ran. So user-facing calls are
+# counted, and the background worker waits for them to finish before starting
+# its next piece.
+_local = threading.local()
+_interactive_count = 0
+_idle = threading.Condition()
+
+
+def is_background() -> bool:
+    return getattr(_local, "background", False)
+
+
+def mark_background() -> None:
+    """Called by the background worker thread; its calls yield to the user."""
+    _local.background = True
+
+
+# Set on every user request (see main.py). The gate below is not enough on its
+# own: Ollama runs one request at a time, so a chunk already in flight still
+# blocks the user for its full duration. Keeping background chunks small bounds
+# that stall, and standing down while the user is active means it happens at
+# most once per session rather than on every question.
+USER_IDLE_GRACE_SECONDS = float(os.getenv("CASEMIND_USER_IDLE_GRACE", "90"))
+_last_user_activity = 0.0
+
+
+def note_user_activity() -> None:
+    global _last_user_activity
+    _last_user_activity = time.monotonic()
+
+
+def user_is_active() -> bool:
+    return (time.monotonic() - _last_user_activity) < USER_IDLE_GRACE_SECONDS
+
+
+def wait_until_user_idle(timeout: float = 300.0) -> None:
+    """Block while a user-facing LLM call is in flight, or the user is actively
+    using the app. Background work is never worth making a person wait."""
+    with _idle:
+        _idle.wait_for(lambda: _interactive_count == 0, timeout=timeout)
+    deadline = time.monotonic() + timeout
+    while user_is_active() and time.monotonic() < deadline:
+        time.sleep(2)
+
+
 def _chat(messages: list[dict]) -> str | None:
     model = active_model()
     if model is None:
         return None
+    if is_background():
+        return _chat_call(model, messages)
+
+    global _interactive_count
+    with _idle:
+        _interactive_count += 1
+    try:
+        return _chat_call(model, messages)
+    finally:
+        with _idle:
+            _interactive_count -= 1
+            _idle.notify_all()
+
+
+def _chat_call(model: str, messages: list[dict]) -> str | None:
     payload = {
         "model": model,
         "stream": False,

@@ -25,7 +25,7 @@ def _run_worker_once(evidence_id: int) -> str:
 
 
 def test_russian_document_is_translated_and_stored(tmp_path, monkeypatch):
-    monkeypatch.setattr(llm_service, "translate", lambda text, target="Hebrew": "יוליה פגשה את דמיטרי")
+    monkeypatch.setattr(llm_service, "translate_chunk", lambda chunk, target="Hebrew": "יוליה פגשה את דמיטרי")
     with TestClient(app) as client:
         ev_id = _import(client, tmp_path, "Юлия встретила Дмитрия возле банка в понедельник вечером.")
         assert _run_worker_once(ev_id) == "done"
@@ -39,8 +39,8 @@ def test_russian_document_is_translated_and_stored(tmp_path, monkeypatch):
 def test_hebrew_document_is_not_translated(tmp_path, monkeypatch):
     # an hour of GPU time must not be spent on a file that needs nothing
     called = []
-    monkeypatch.setattr(llm_service, "translate",
-                        lambda text, target="Hebrew": called.append(text) or "x")
+    monkeypatch.setattr(llm_service, "translate_chunk",
+                        lambda chunk, target="Hebrew": called.append(chunk) or "x")
     with TestClient(app) as client:
         ev_id = _import(client, tmp_path, "העד מסר כי ראה רכב לבן חונה ליד הבית בשעה 22:00.")
         assert _run_worker_once(ev_id) == "not_needed"
@@ -49,16 +49,17 @@ def test_hebrew_document_is_not_translated(tmp_path, monkeypatch):
 
 def test_failure_leaves_it_queued_for_retry(tmp_path, monkeypatch):
     # LLM down mid-backlog: the file must stay claimable, not be marked done
-    monkeypatch.setattr(llm_service, "translate", lambda text, target="Hebrew": None)
+    monkeypatch.setattr(llm_service, "translate_chunk", lambda chunk, target="Hebrew": None)
     with TestClient(app) as client:
         ev_id = _import(client, tmp_path, "Юлия встретила Дмитрия возле банка в понедельник вечером.")
         assert _run_worker_once(ev_id) == "failed"
         with Session(get_engine()) as session:
-            assert session.get(Evidence, ev_id).translation_status == ""  # retried later
+            # nothing was translated, so it is still unclaimed and gets retried
+            assert session.get(Evidence, ev_id).translation_status == ""
 
 
 def test_status_reports_the_translation_backlog(tmp_path, monkeypatch):
-    monkeypatch.setattr(llm_service, "translate", lambda text, target="Hebrew": "תורגם")
+    monkeypatch.setattr(llm_service, "translate_chunk", lambda chunk, target="Hebrew": "תורגם")
     with TestClient(app) as client:
         ev_id = _import(client, tmp_path, "Юлия встретила Дмитрия возле банка в понедельник вечером.")
         before = client.get("/status").json()
