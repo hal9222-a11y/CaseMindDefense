@@ -34,7 +34,11 @@ def _evidence_dict(ev: Evidence) -> dict:
         "id": ev.id,
         "case_id": ev.case_id,
         "original_path": ev.original_path,
-        "stored_path": ev.stored_path,
+        # absolute: the desktop opens this file itself and runs from a different
+        # working directory, so a backend-relative path resolves to nothing
+        # there. Rows imported before the store path was absolute are fixed here
+        # too, without a migration.
+        "stored_path": str(Path(ev.stored_path).resolve()),
         "filename": ev.filename,
         "sha256": ev.sha256,
         "size_bytes": ev.size_bytes,
@@ -65,7 +69,9 @@ def _index_in_background(evidence_ids: list[int]) -> None:
 
 @router.get("")
 def list_evidence(
-    limit: int = Query(100, ge=1, le=1000),
+    # a forensic export runs to thousands of files; a low ceiling silently drops
+    # evidence off the end of the browser, which is not acceptable in a legal tool
+    limit: int = Query(100, ge=1, le=20000),
     offset: int = Query(0, ge=0),
     case_id: int | None = Query(None),
     session: Session = Depends(get_session),

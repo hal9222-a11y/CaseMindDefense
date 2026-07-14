@@ -16,13 +16,16 @@ class Settings(BaseModel):
         )
     )
 
+    # resolved to an absolute path: the desktop reads stored files straight off
+    # disk, and it runs from a different working directory than the backend — a
+    # relative path silently became "file not found" in the preview
     evidence_store_dir: Path = Field(
         default_factory=lambda: Path(
             os.getenv(
                 "CASEMIND_EVIDENCE_STORE",
                 "./data/evidence_store",
             )
-        )
+        ).resolve()
     )
 
 

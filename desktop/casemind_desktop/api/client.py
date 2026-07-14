@@ -45,12 +45,17 @@ class ApiClient:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
+    # the browser must show every file. The server default is 100, and a case
+    # with 108 files silently lost the last 8 — including from citation
+    # navigation, which then reported "the cited evidence is not in the list".
+    EVIDENCE_PAGE_LIMIT = 20000
+
     def list_evidence(self, case_id: int | None = None) -> list[dict[str, Any]]:
-        params: dict[str, Any] = {}
+        params: dict[str, Any] = {"limit": self.EVIDENCE_PAGE_LIMIT}
         if case_id is not None:
             params["case_id"] = case_id
         response = self._session.get(
-            self._url(endpoints.EVIDENCE), params=params, timeout=REQUEST_TIMEOUT
+            self._url(endpoints.EVIDENCE), params=params, timeout=60
         )
         response.raise_for_status()
         return response.json()
