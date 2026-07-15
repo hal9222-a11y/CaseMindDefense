@@ -81,10 +81,15 @@ def relocate_source(req: RelocateRequest, session: Session = Depends(get_session
     if not old or not new:
         raise HTTPException(status_code=422, detail="old and new folder are required")
 
+    def under(path: str) -> bool:
+        # match at a folder boundary, not any character: old="C:\case" must NOT
+        # match "C:\case2\..." or "C:\caseX" and corrupt their paths
+        return path == old or path.startswith(old + "\\") or path.startswith(old + "/")
+
     rows = session.exec(select(Evidence)).all()
     updated = 0
     for ev in rows:
-        if ev.original_path and ev.original_path.startswith(old):
+        if ev.original_path and under(ev.original_path):
             ev.original_path = new + ev.original_path[len(old):]
             session.add(ev)
             updated += 1

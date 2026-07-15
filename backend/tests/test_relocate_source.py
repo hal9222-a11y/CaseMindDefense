@@ -62,6 +62,30 @@ def test_relocate_repoints_only_the_moved_folder(isolated_db):
         ]
 
 
+def test_relocate_matches_only_at_a_folder_boundary(isolated_db):
+    # bug: startswith() matched any character, so re-pointing "C:\case" also
+    # corrupted "C:\case2\..." and "C:\caseX" — unrelated folders
+    with TestClient(app) as client:
+        _seed([
+            r"\\NAS\case\a.txt",       # under the folder -> rewrite
+            r"\\NAS\case\sub\b.txt",   # under the folder -> rewrite
+            r"\\NAS\case2\c.txt",      # DIFFERENT folder -> must NOT change
+            r"\\NAS\caseX",            # DIFFERENT folder -> must NOT change
+        ])
+        res = client.post("/admin/relocate-source", json={
+            "old_prefix": r"\\NAS\case", "new_prefix": r"E:\local"}).json()
+        assert res["updated"] == 2
+
+        with Session(get_engine()) as s:
+            paths = sorted(e.original_path for e in s.exec(select(Evidence)).all())
+        assert paths == [
+            r"E:\local\a.txt",
+            r"E:\local\sub\b.txt",
+            r"\\NAS\case2\c.txt",   # untouched
+            r"\\NAS\caseX",         # untouched
+        ]
+
+
 def test_relocate_rejects_empty_input(isolated_db):
     with TestClient(app) as client:
         _seed([r"\\NAS\share\a.txt"])
