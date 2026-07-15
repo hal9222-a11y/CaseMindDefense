@@ -27,6 +27,77 @@ WHISPER_MODEL = os.getenv("CASEMIND_WHISPER_MODEL", "small")
 WHISPER_DEVICE = os.getenv("CASEMIND_WHISPER_DEVICE", "auto")
 CHUNK_TARGET_CHARS = 1000
 
+# Silent-skip: this case holds ~14,500 videos, most of them short WhatsApp
+# clips. Many carry NO audio track at all (a GIF saved as .mp4, a muted clip);
+# running the full transcription pipeline on them wastes GPU time to produce
+# nothing. A header-only probe (no decode) skips those instantly. Files WITH an
+# audio track still go to Whisper, whose VAD already avoids inference on silence.
+SKIP_SILENT = os.getenv("CASEMIND_SKIP_SILENT", "1") != "0"
+# below this many seconds of audio there is no meaningful speech to find (a
+# sticker, a 0.2s notification). Conservative — a one-word "כן" is ~0.5s.
+MIN_AUDIO_SECONDS = float(os.getenv("CASEMIND_MIN_AUDIO_SECONDS", "0.4"))
+
+
+def _probe_media(path: Path) -> tuple[bool, float]:
+    """(has_audio_stream, audio_seconds) from the container HEADER only — no
+    decode, so it is near-instant. (True, 0.0) when the file can't be probed,
+    so an unprobeable file is still handed to Whisper rather than dropped."""
+    try:
+        import av
+    except ImportError:  # pragma: no cover - av ships with faster-whisper
+        return (True, 0.0)
+    try:
+        with av.open(str(path)) as container:
+            audio_streams = [s for s in container.streams if s.type == "audio"]
+            if not audio_streams:
+                return (False, 0.0)
+            stream = audio_streams[0]
+            duration = 0.0
+            if stream.duration is not None and stream.time_base is not None:
+                duration = float(stream.duration * stream.time_base)
+            elif container.duration is not None:
+                duration = container.duration / av.time_base
+            return (True, duration)
+    except Exception:
+        return (True, 0.0)  # probe failed — do not skip on a guess
+
+
+def _silent_skip_reason(path: Path) -> str | None:
+    """Why to skip this file without transcribing, or None to transcribe it.
+    Header-only (no decode): catches files with no audio track or a trivially
+    short one. Most phone-clip videos DO carry an audio track, though — the
+    speech check in _decode_and_vad catches the silent-but-present ones."""
+    if not SKIP_SILENT:
+        return None
+    has_audio, duration = _probe_media(path)
+    if not has_audio:
+        return "no audio stream"
+    if 0 < duration < MIN_AUDIO_SECONDS:
+        return f"audio too short ({duration:.2f}s)"
+    return None
+
+
+def _decode_and_vad(path: Path):
+    """Decode the audio ONCE and run voice-activity detection on it.
+
+    Returns (audio_array, has_speech). A phone dump is full of clips whose
+    audio track is music or ambient noise with no speech — VAD skips those, and
+    when there IS speech we hand Whisper the SAME decoded array (vad_filter off)
+    so nothing is decoded or VAD'd twice. (None, True) on any failure, so a file
+    we can't pre-check still goes to Whisper the normal way rather than dropped."""
+    try:
+        from faster_whisper.audio import decode_audio
+        from faster_whisper.vad import VadOptions, get_speech_timestamps
+    except ImportError:  # pragma: no cover
+        return (None, True)
+    try:
+        audio = decode_audio(str(path), sampling_rate=16000)
+    except Exception as exc:
+        logger.warning("could not decode audio in %s: %s", path.name, exc)
+        return (None, True)
+    speech = get_speech_timestamps(audio, VadOptions())
+    return (audio, bool(speech))
+
 
 def _enable_cuda_dlls() -> None:
     """faster-whisper's CUDA runtime (cuBLAS/cuDNN) ships as pip packages under
@@ -94,12 +165,31 @@ def transcribe_to_chunks(path: Path) -> list[dict] | None:
     time-range citations: {'text', 'source_location': 'time:MM:SS-MM:SS'}.
 
     Returns None when Whisper is unavailable; [] when there is no speech."""
+    # cheap header probe BEFORE loading/decoding: drop no-audio and trivially
+    # short files (thousands of them in a phone dump) without spending GPU time
+    skip = _silent_skip_reason(path)
+    if skip is not None:
+        logger.info("skipping %s: %s", path.name, skip)
+        return []  # -> 'no_text_found', same as a silent transcription
+
     model = _load_whisper()
     if model is None:
         return None  # whisper not installed — a system-level issue
 
+    # decode + VAD once; skip files with no speech, reuse the array otherwise
+    source: object = str(path)
+    use_vad_filter = True
+    if SKIP_SILENT:
+        audio, has_speech = _decode_and_vad(path)
+        if audio is not None:
+            if not has_speech:
+                logger.info("skipping %s: no speech detected (VAD)", path.name)
+                return []
+            source = audio          # transcribe the array we already decoded
+            use_vad_filter = False  # and already VAD'd — do not repeat it
+
     try:
-        segments, info = model.transcribe(str(path), vad_filter=True)
+        segments, info = model.transcribe(source, vad_filter=use_vad_filter)
     except Exception as exc:
         # this file couldn't be transcribed (e.g. a video with no audio
         # track raises IndexError inside faster-whisper). That's not a
