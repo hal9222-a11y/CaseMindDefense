@@ -15,7 +15,7 @@ AUDIO_EXTENSIONS = {
     ".wav", ".mp3", ".m4a", ".ogg", ".opus", ".flac",
     ".aac", ".amr", ".3gp", ".3gpp", ".wma", ".webm", ".m4b",
 }
-VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov", ".3gp", ".webm", ".wmv", ".flv"}
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov", ".3gp", ".webm", ".wmv", ".flv", ".vob", ".mpg", ".mpeg", ".m4v"}
 MEDIA_EXTENSIONS = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
 
 # "small" is multilingual (Hebrew/Russian/English) and CPU-viable.

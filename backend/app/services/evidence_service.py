@@ -40,6 +40,7 @@ SUPPORTED_EXTENSIONS = {
     ".txt", ".pdf",
     ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif", ".webp",
     ".docx", ".xlsx", ".pptx", ".eml", ".msg",
+    ".xml",  # forensic export manifests / call logs — data lives in attributes
     *MEDIA_EXTENSIONS,
 }
 
