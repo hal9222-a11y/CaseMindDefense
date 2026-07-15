@@ -19,14 +19,24 @@ class Settings(BaseModel):
     # resolved to an absolute path: the desktop reads stored files straight off
     # disk, and it runs from a different working directory than the backend — a
     # relative path silently became "file not found" in the preview
-    evidence_store_dir: Path = Field(
-        default_factory=lambda: Path(
-            os.getenv(
-                "CASEMIND_EVIDENCE_STORE",
-                "./data/evidence_store",
-            )
-        ).resolve()
-    )
+    evidence_store_dir: Path = Field(default_factory=lambda: _evidence_store_dir())
+
+
+def _evidence_store_dir() -> Path:
+    """Where the evidence store lives: env override, else a redirect file, else
+    the in-repo default. The redirect file exists because the desktop revives a
+    dead backend with the DESKTOP's environment — an env-only relocation would
+    silently flip a revived backend back to the old (possibly full) drive and
+    write new evidence there."""
+    env = os.getenv("CASEMIND_EVIDENCE_STORE")
+    if env:
+        return Path(env).resolve()
+    redirect = Path(__file__).resolve().parents[2] / "data" / "evidence_store.path"
+    if redirect.exists():
+        target = redirect.read_text(encoding="utf-8").strip()
+        if target:
+            return Path(target).resolve()
+    return Path("./data/evidence_store").resolve()
 
 
 def get_settings() -> Settings:
