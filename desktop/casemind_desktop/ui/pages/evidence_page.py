@@ -128,14 +128,29 @@ class EvidencePage(QWidget):
             "העיבוד (OCR / תמלול / אינדוקס) רץ ברקע — Refresh יראה התקדמות."
         )
         # a file that was not imported is evidence that is not in the case; the
-        # user has to be told, not left to assume everything came in
+        # user has to be told, not left to assume everything came in. Types we
+        # KNOW carry no evidence get labeled so 372 DVD-menu files don't read
+        # like 372 missed wiretaps (inspected real samples of each):
+        known_non_evidence = {
+            ".end": "קובץ סימון של מערכת הייצוא (ללא תוכן)",
+            ".ifo": "תפריט DVD — התוכן עצמו הוא קבצי ה-VOB שנקלטים",
+            ".bup": "עותק גיבוי של תפריט DVD",
+            ".ini": "הגדרות תצוגת תיקייה של Windows",
+            ".lnk": "קיצור דרך של Windows",
+        }
         if skipped:
             by_type = result.get("skipped_by_type") or {}
-            detail = ", ".join(f"{ext} ×{n}" for ext, n in sorted(
-                by_type.items(), key=lambda kv: -kv[1])[:6])
+            lines, unknown = [], 0
+            for ext, n in sorted(by_type.items(), key=lambda kv: -kv[1])[:8]:
+                label = known_non_evidence.get(ext)
+                lines.append(f"{ext} ×{n}" + (f" — {label}" if label else ""))
+                if not label:
+                    unknown += n
+            message += f"\n\n⚠️ {skipped} קבצים לא נקלטו — סוג קובץ לא נתמך:\n" + "\n".join(lines)
             message += (
-                f"\n\n⚠️ {skipped} קבצים לא נקלטו — סוג קובץ לא נתמך:\n{detail}\n"
-                "הקבצים האלה אינם בתיק. בדוק אם הם רלוונטיים לחקירה."
+                "\nבדוק אם הסוגים ללא תיאור רלוונטיים לחקירה."
+                if unknown else
+                "\nכל הסוגים שדולגו הם קבצי מערכת ללא תוכן ראייתי."
             )
         if errors:
             message += "\n\nשגיאות ראשונות:\n" + "\n".join(
