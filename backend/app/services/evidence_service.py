@@ -62,7 +62,17 @@ def register_evidence(session: Session, source_path: str, case_id: int | None = 
     store_dir.mkdir(parents=True, exist_ok=True)
     stored = store_dir / f"{digest}{src.suffix.lower()}"
     if not stored.exists():
-        shutil.copy2(src, stored)
+        # copy via temp + atomic rename: a copy that dies midway (disk full,
+        # unplugged drive) must not leave a truncated file at the final name —
+        # the next import attempt would see it "exists", skip the copy, and
+        # register evidence pointing at a corrupt copy of the original
+        tmp = stored.with_suffix(stored.suffix + ".part")
+        try:
+            shutil.copy2(src, tmp)
+            tmp.replace(stored)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
 
     evidence = Evidence(
         case_id=case_id,
