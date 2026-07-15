@@ -130,10 +130,25 @@ class PreviewWidget(QWidget):
             self._text_view.find(needle)
             self._highlight = None
 
-    def _show_image(self, item: dict[str, Any]) -> None:
+    def _show_image(self, item: dict[str, Any], fresh: bool = False) -> None:
         stored = Path(item.get("stored_path", ""))
         if not stored.exists():
-            self._show_message("Stored image file not found.")
+            if not fresh and item.get("id"):
+                # the row in the table was loaded earlier and its stored_path
+                # may predate an evidence-store move to another drive; the
+                # backend knows the current location — ask it before giving up
+                evidence_id = item["id"]
+                run_async(
+                    self.api.get_evidence,
+                    evidence_id,
+                    on_done=lambda current: (
+                        self._show_image(current, fresh=True)
+                        if self._current_id == evidence_id else None
+                    ),
+                    on_error=self._show_message,
+                )
+                return
+            self._show_message(f"Stored image file not found:\n{stored}")
             return
         pixmap = QPixmap(str(stored))
         if pixmap.isNull():

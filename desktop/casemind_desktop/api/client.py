@@ -311,6 +311,13 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def get_evidence(self, evidence_id: int) -> dict[str, Any]:
+        response = self._session.get(
+            self._url(f"{endpoints.EVIDENCE}/{evidence_id}"), timeout=REQUEST_TIMEOUT
+        )
+        response.raise_for_status()
+        return response.json()
+
     def get_evidence_content(self, evidence_id: int) -> dict[str, Any]:
         response = self._session.get(
             self._url(endpoints.evidence_content(evidence_id)),
