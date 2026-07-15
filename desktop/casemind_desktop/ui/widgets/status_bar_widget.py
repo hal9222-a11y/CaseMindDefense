@@ -91,16 +91,52 @@ class StatusBarWidget(QStatusBar):
             # never hide failures behind a green light
             parts.append(f"⚠️ {failed} נכשלו")
 
-        # the machine works ahead of the user: show the translation backlog
+        # the machine works ahead of the user — but be honest about it: with no
+        # LLM, translation is not "running in the background", it is stuck
         pending = s.get("to_translate", 0)
-        if pending:
+        translated = s.get("translated", 0)
+        llm_up = s.get("llm_available")
+        if pending and llm_up:
             parts.append(f"🌐 מתרגם ברקע — נותרו {pending}")
-        elif s.get("translated"):
-            parts.append(f"🌐 {s['translated']} מתורגמים")
+        elif pending:
+            parts.append(f"🌐 {pending} ממתינים לתרגום (הפעל Ollama)")
+        elif translated:
+            parts.append(f"🌐 {translated} מתורגמים")
 
-        if s.get("llm_available"):
+        if llm_up:
             parts.append(f"🤖 AI זמין ({s.get('llm_model', '')})")
         else:
             parts.append("📄 AI לא זמין — מצב ציטוטים בלבד")
+
+        # full background-jobs breakdown on hover — keeps the bar short but lets
+        # the user see exactly what is happening to the material
+        self.setToolTip(self._background_summary(s))
+
+    def _background_summary(self, s: dict) -> str:
+        total = s.get("evidence_total", 0)
+        processing = s.get("processing", 0)
+        lines = ["מצב הטיפול בחומר ברקע:", ""]
+        if processing:
+            cur = s.get("current") or {}
+            lines.append(f"⚙️ מעבד כעת: {cur.get('stage', '')} — {cur.get('filename', '')}")
+            lines.append(f"   נותרו {processing} מתוך {total} (OCR / תמלול / אינדוקס)")
+        else:
+            lines.append(f"✅ עיבוד ראשוני הושלם — כל {total} הראיות")
+        lines += [
+            "",
+            f"📄 {s.get('indexed', 0)} עם טקסט (ניתן לחיפוש)",
+            f"🚫 {s.get('no_text', 0)} ללא טקסט",
+        ]
+        if s.get("failed"):
+            lines.append(f"⚠️ {s['failed']} נכשלו")
+        lines.append("")
+        done_t, pend_t = s.get("translated", 0), s.get("to_translate", 0)
+        if pend_t and not s.get("llm_available"):
+            lines.append(f"🌐 תרגום: {done_t} הושלמו · {pend_t} תקועים — Ollama כבוי")
+        elif pend_t:
+            lines.append(f"🌐 תרגום: {done_t} הושלמו · {pend_t} בתור")
+        else:
+            lines.append(f"🌐 תרגום: {done_t} הושלמו")
+        return "\n".join(lines)
 
         self.showMessage("   ·   ".join(parts))
