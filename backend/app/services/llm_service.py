@@ -28,6 +28,13 @@ FORCED_MODEL = os.getenv("CASEMIND_LLM_MODEL") or None
 
 # names/families that aren't general-purpose chat models — never auto-select
 _EXCLUDE_RE = re.compile(r"ocr|embed|rerank|whisper|bge|vl|vision|code|guard|cloud", re.I)
+# Reasoning models emit a long hidden "thinking" pass before the answer — on
+# local hardware that is minutes per call, which reads as "AI timed out" to the
+# user. Auto-select must prefer a plain chat model even when a reasoning model
+# is bigger (qwen3.5:9b kept beating gemma4:latest on size and timing out).
+# ponytail: name heuristic, misses unlisted reasoning families; upgrade path is
+# Ollama /api/show "capabilities" (lists "thinking") if this mismatches.
+_REASONING_RE = re.compile(r"qwen3|deepseek-r|qwq|magistral|think|reason", re.I)
 # largest model to auto-pick: bigger ones give better answers but on local CPU
 # a 30B model can take minutes and re-introduce timeouts. Override via env to
 # force a bigger model if the machine has the GPU for it.
@@ -97,8 +104,16 @@ def _pick_model(installed: list[dict]) -> str | None:
     usable = [m for m in installed if not _EXCLUDE_RE.search(_label(m))] or installed
     within = [m for m in usable if _size_b(m) <= _SIZE_CEILING_B]
     if within:
-        return max(within, key=_size_b)["name"]
-    return min(usable, key=_size_b)["name"]
+        # largest plain model first; a reasoning model only when nothing else fits
+        return max(
+            within,
+            key=lambda m: (not _REASONING_RE.search(_label(m)), _size_b(m)),
+        )["name"]
+    # everything is over the ceiling: smallest one, still preferring plain chat
+    return min(
+        usable,
+        key=lambda m: (bool(_REASONING_RE.search(_label(m))), _size_b(m)),
+    )["name"]
 
 
 def active_model() -> str | None:

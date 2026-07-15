@@ -1,6 +1,7 @@
 import mimetypes
 import os
 import shutil
+import threading
 from pathlib import Path
 from sqlmodel import Session, select
 from app.core.settings import get_settings
@@ -216,41 +217,57 @@ def import_file(session: Session, source_path: str, case_id: int | None = None) 
     return index_evidence(session, evidence.id)
 
 
+# one resume loop per process: it is started from three places (startup thread,
+# /admin/reindex-all, /admin/reindex-pending) and the models are process-global
+# and not safe under concurrent inference
+_RESUME_LOCK = threading.Lock()
+
+
 def resume_pending_indexing() -> int:
-    """Re-index every evidence stuck in 'processing'. Background indexing runs
-    as one task per folder-import; if the process restarts or the task dies
-    mid-batch, those items are orphaned forever. Called on startup (in a
-    thread) and by the admin endpoint. Runs sequentially — the models are
-    process-global and not safe under concurrent inference. Returns the count
-    processed."""
+    """Index every evidence in 'processing' until none remain. Covers both
+    items orphaned by a crash/restart and items freshly marked by reindex-all.
+    Fetches the next item each iteration (not a snapshot), so work queued while
+    the loop runs is picked up instead of waiting for the next restart. If a
+    loop is already running, returns immediately — that loop will get to the
+    new items. Returns the count processed by THIS call."""
     import logging
 
     from app.db import get_engine
-
-    logger = logging.getLogger("app.resume")
-    with Session(get_engine()) as session:
-        pending = list(session.exec(select(Evidence.id).where(Evidence.status == "processing")).all())
-    if not pending:
-        return 0
-    logger.warning("resuming %d evidence stuck in 'processing'", len(pending))
-
     from app.services import background_control
 
+    logger = logging.getLogger("app.resume")
+    if not _RESUME_LOCK.acquire(blocking=False):
+        logger.info("resume already running; the active loop will pick up new items")
+        return 0
+
     done = 0
-    with Session(get_engine()) as session:
-        for evidence_id in pending:
-            background_control.wait_while_paused()  # user paused background work
-            try:
-                index_evidence(session, evidence_id)
-                done += 1
-            except Exception:
-                logger.exception("resume-index failed for evidence %s", evidence_id)
-                ev = session.get(Evidence, evidence_id)
-                if ev is not None:
-                    ev.status = "text_extraction_failed"
-                    session.add(ev)
-                    session.commit()
-    logger.warning("resume complete: %d/%d indexed", done, len(pending))
+    attempted: set[int] = set()  # never retry an id within one run — no spin on a row that can't be marked failed
+    try:
+        with Session(get_engine()) as session:
+            while True:
+                background_control.wait_while_paused()  # user paused background work
+                query = select(Evidence.id).where(Evidence.status == "processing")
+                if attempted:
+                    query = query.where(Evidence.id.not_in(attempted))
+                evidence_id = session.exec(query.order_by(Evidence.id).limit(1)).first()
+                if evidence_id is None:
+                    break
+                attempted.add(evidence_id)
+                try:
+                    index_evidence(session, evidence_id)
+                    done += 1
+                except Exception:
+                    logger.exception("resume-index failed for evidence %s", evidence_id)
+                    session.rollback()
+                    ev = session.get(Evidence, evidence_id)
+                    if ev is not None:
+                        ev.status = "text_extraction_failed"
+                        session.add(ev)
+                        session.commit()
+    finally:
+        _RESUME_LOCK.release()
+    if attempted:
+        logger.warning("resume complete: %d/%d indexed", done, len(attempted))
     return done
 
 

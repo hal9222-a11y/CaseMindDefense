@@ -73,6 +73,10 @@ def translate_one(session: Session, evidence: Evidence) -> str:
 
     chunks = llm_service.split_for_translation(text)
     done = evidence.translation_chunks_done or 0
+    if done > len(chunks):
+        # the evidence was re-indexed since we started and the chunking changed;
+        # a partial translation of the OLD text must not be stitched to the new
+        done = 0
     if done == 0:
         evidence.translation = ""
     logger.info(

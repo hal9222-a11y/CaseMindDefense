@@ -4,7 +4,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app.db import get_engine, get_session
+from app.db import get_session
 from app.models.evidence import Evidence
 from app.services.audit_service import log_event
 from app.services.evidence_service import (
@@ -12,7 +12,6 @@ from app.services.evidence_service import (
     DuplicateEvidenceError,
     ImportPathNotAllowedError,
     delete_evidence_record,
-    index_evidence,
     register_evidence,
 )
 
@@ -48,23 +47,15 @@ def _evidence_dict(ev: Evidence) -> dict:
     }
 
 
-def _index_in_background(evidence_ids: list[int]) -> None:
-    import logging
+def _index_in_background() -> None:
+    # All indexing funnels through resume_pending_indexing: it serializes on one
+    # process-wide lock (the ML models are not safe under concurrent inference)
+    # and works through every evidence in 'processing', so a folder import that
+    # lands while the startup resume is still running joins that queue instead
+    # of racing it with a second model-inference loop.
+    from app.services.evidence_service import resume_pending_indexing
 
-    # background task: request session is closed by now, open a fresh one
-    with Session(get_engine()) as session:
-        for evidence_id in evidence_ids:
-            try:
-                index_evidence(session, evidence_id)
-            except Exception:
-                logging.getLogger(__name__).exception(
-                    "background indexing failed for evidence %s", evidence_id
-                )
-                ev = session.get(Evidence, evidence_id)
-                if ev is not None:
-                    ev.status = "text_extraction_failed"
-                    session.add(ev)
-                    session.commit()
+    resume_pending_indexing()
 
 
 @router.get("")
@@ -108,7 +99,7 @@ def import_file_endpoint(
     except ImportPathNotAllowedError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
 
-    background.add_task(_index_in_background, [ev.id])
+    background.add_task(_index_in_background)
     return _evidence_dict(ev)
 
 
@@ -151,7 +142,7 @@ def import_folder_endpoint(
             result["errors"].append({"path": str(path), "error": str(exc)})
 
     if registered_ids:
-        background.add_task(_index_in_background, registered_ids)
+        background.add_task(_index_in_background)
     return result
 
 
@@ -179,7 +170,7 @@ def reindex_evidence(
     ev.status = "processing"
     session.add(ev)
     session.commit()
-    background.add_task(_index_in_background, [evidence_id])
+    background.add_task(_index_in_background)
     return {"id": evidence_id, "status": "processing"}
 
 

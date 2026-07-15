@@ -202,14 +202,16 @@ def create_backup(session: Session = Depends(get_session)):
         src.close()
 
     files = 0
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(db_snapshot, "casemind_defense.db")
-        if store_dir.exists():
-            for f in sorted(store_dir.rglob("*")):
-                if f.is_file():
-                    zf.write(f, Path("evidence_store") / f.relative_to(store_dir))
-                    files += 1
-    db_snapshot.unlink()
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(db_snapshot, "casemind_defense.db")
+            if store_dir.exists():
+                for f in sorted(store_dir.rglob("*")):
+                    if f.is_file():
+                        zf.write(f, Path("evidence_store") / f.relative_to(store_dir))
+                        files += 1
+    finally:
+        db_snapshot.unlink(missing_ok=True)  # no stray snapshot when zipping fails
 
     result = {
         "path": str(zip_path.resolve()),
