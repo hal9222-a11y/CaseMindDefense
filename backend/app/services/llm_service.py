@@ -77,11 +77,20 @@ def _pick_model(installed: list[dict]) -> str | None:
         return None
     if FORCED_MODEL:
         base = FORCED_MODEL.split(":")[0]
-        return next(
+        forced = next(
             (m["name"] for m in installed
              if m["name"] == FORCED_MODEL or m["name"].split(":")[0] == base),
             None,
         )
+        if forced:
+            return forced
+        # forced model isn't installed (e.g. it was removed) — fall through to
+        # auto-select instead of leaving the app with NO AI. A pinned model is a
+        # preference, not a reason to have zero LLM when 14 others are present.
+        logger.warning(
+            "CASEMIND_LLM_MODEL=%s is not installed; auto-selecting instead", FORCED_MODEL
+        )
+
     def _label(m: dict) -> str:
         return f"{m.get('name', '')} {m.get('details', {}).get('family', '')}"
 
