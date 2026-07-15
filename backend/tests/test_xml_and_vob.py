@@ -38,6 +38,20 @@ def test_xml_and_dvd_video_are_supported():
     assert ".vob" in SUPPORTED_EXTENSIONS
 
 
+def test_csv_and_html_extract_as_text():
+    for ext in (".csv", ".html", ".htm"):
+        assert ext in SUPPORTED_EXTENSIONS
+    p = Path(tempfile.mktemp(suffix=".csv"))
+    p.write_text("caller,callee,time\n0521234567,0529876543,13-07-2021", encoding="utf-8")
+    text, method = extract_text(p)
+    assert method == "text" and "0521234567" in text
+
+    h = Path(tempfile.mktemp(suffix=".html"))
+    h.write_text("<html><body><p>פגישה בשעה 14:00</p></body></html>", encoding="utf-8")
+    text, method = extract_text(h)
+    assert method == "text" and "פגישה בשעה 14:00" in text and "<" not in text
+
+
 def test_disc_structure_and_config_are_still_skipped():
     # not evidence content — importing them would only add noise (and the folder
     # import already reports them as skipped)

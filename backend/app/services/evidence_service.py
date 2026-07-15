@@ -42,6 +42,8 @@ SUPPORTED_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif", ".webp",
     ".docx", ".xlsx", ".pptx", ".eml", ".msg",
     ".xml",  # forensic export manifests / call logs — data lives in attributes
+    ".csv",  # call logs / cell records ship as CSV in forensic exports
+    ".html", ".htm",  # saved pages / report exports — indexed as tag-stripped text
     *MEDIA_EXTENSIONS,
 }
 

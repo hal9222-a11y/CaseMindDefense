@@ -181,8 +181,14 @@ def extract_text(path: Path) -> tuple[str, str]:
     """
     suffix = path.suffix.lower()
 
-    if suffix == ".txt":
+    if suffix in (".txt", ".csv"):
+        # .csv: forensic exports ship call logs / cell records as CSV — the
+        # comma-separated text is perfectly searchable as-is
         return path.read_text(encoding="utf-8", errors="ignore").strip(), "text"
+
+    if suffix in (".html", ".htm"):
+        raw = path.read_text(encoding="utf-8", errors="ignore")
+        return re.sub(r"<[^>]+>", " ", raw).strip(), "text"
 
     if suffix == ".xml":
         return _extract_xml_text(path), "text"
