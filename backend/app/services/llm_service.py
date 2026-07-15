@@ -381,23 +381,51 @@ def _chat_call(model: str, messages: list[dict]) -> str | None:
     return _ollama_call(model, messages)
 
 
-def _ollama_call(model: str, messages: list[dict]) -> str | None:
-    payload = {
-        "model": model,
-        "stream": False,
-        "messages": messages,
-        "options": {"temperature": 0.1},
-    }
+def _post_chat(model: str, messages: list[dict], num_gpu: int | None) -> str:
+    options: dict = {"temperature": 0.1}
+    if num_gpu is not None:
+        options["num_gpu"] = num_gpu  # 0 = force CPU (no GPU layers)
+    payload = {"model": model, "stream": False, "messages": messages, "options": options}
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
+    # a CPU pass is far slower than GPU; give it materially more time before
+    # the client gives up, or a genuine CPU answer reads as a timeout
+    timeout = LLM_TIMEOUT_SECONDS if num_gpu != 0 else max(LLM_TIMEOUT_SECONDS, 600)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = json.load(resp)
+    return (body.get("message", {}).get("content") or "").strip()
+
+
+def _looks_like_gpu_oom(exc: Exception) -> bool:
+    """Ollama returns HTTP 500 when llama-server crashes loading the model —
+    which on this 4GB card happens whenever Whisper is already holding the GPU.
+    The body names a stack-overrun / CUDA / memory failure."""
+    if not isinstance(exc, urllib.error.HTTPError) or exc.code != 500:
+        return False
     try:
-        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_SECONDS) as resp:
-            body = json.load(resp)
-        return (body.get("message", {}).get("content") or "").strip() or None
+        body = exc.read().decode("utf-8", "ignore").lower()
+    except Exception:
+        return True  # a 500 with no readable body: treat as the same class
+    return any(s in body for s in ("terminated", "buffer", "memory", "cuda", "vram", "0xc0000409"))
+
+
+def _ollama_call(model: str, messages: list[dict]) -> str | None:
+    try:
+        return _post_chat(model, messages, num_gpu=None) or None
     except Exception as exc:
+        # GPU busy (transcription runs for days on the shared card) -> don't
+        # fail the user's request, run this one on the CPU instead. Slower, but
+        # it answers, and it doesn't fight Whisper for the 4GB GPU.
+        if _looks_like_gpu_oom(exc):
+            logger.warning("LLM GPU load failed (GPU busy?); retrying on CPU")
+            try:
+                return _post_chat(model, messages, num_gpu=0) or None
+            except Exception as cpu_exc:
+                logger.warning("LLM CPU retry also failed: %s", cpu_exc)
+                return None
         logger.warning("LLM call failed: %s", exc)
         return None
 
