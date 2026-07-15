@@ -371,6 +371,19 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def source_root(self) -> dict[str, Any]:
+        response = self._session.get(self._url("/admin/source-root"), timeout=30)
+        response.raise_for_status()
+        return response.json()
+
+    def relocate_source(self, old_prefix: str, new_prefix: str) -> dict[str, Any]:
+        response = self._session.post(
+            self._url("/admin/relocate-source"),
+            json={"old_prefix": old_prefix, "new_prefix": new_prefix}, timeout=60,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def ask_ai(self, question: str, limit: int = 5) -> dict[str, Any]:
         body: dict[str, Any] = {"question": question, "limit": limit}
         if self.current_case_id is not None:

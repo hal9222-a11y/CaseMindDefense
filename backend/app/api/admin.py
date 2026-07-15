@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.core.settings import get_settings
@@ -15,6 +17,65 @@ from app.services.audit_service import log_event, verify_audit_chain
 from app.services.hash_service import sha256_file
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _drive_of(path: str) -> str:
+    r"""The root a path lives under, so paths from different drives are grouped
+    apart: '\\server\share' for UNC, 'D:' for local."""
+    if path.startswith("\\\\") or path.startswith("//"):
+        parts = path.replace("/", "\\").split("\\")
+        return "\\\\" + "\\".join(parts[2:4])  # \\server\share
+    return path[:2]
+
+
+@router.get("/source-root")
+def source_root(session: Session = Depends(get_session)):
+    """The folder most of the evidence was imported FROM. Shown so the user can
+    re-point it after moving the files. Evidence can come from several drives;
+    we report the one holding the most files (the folder most worth re-pointing)."""
+    paths = [p for p in session.exec(select(Evidence.original_path)).all() if p]
+    if not paths:
+        return {"root": "", "count": 0}
+
+    groups: dict[str, list[str]] = {}
+    for p in paths:
+        groups.setdefault(_drive_of(p), []).append(p)
+    biggest = max(groups.values(), key=len)
+    try:
+        root = os.path.commonpath(biggest)
+    except ValueError:
+        root = os.path.dirname(biggest[0])
+    return {"root": root, "count": len(biggest), "total": len(paths)}
+
+
+class RelocateRequest(BaseModel):
+    old_prefix: str
+    new_prefix: str
+
+
+@router.post("/relocate-source")
+def relocate_source(req: RelocateRequest, session: Session = Depends(get_session)):
+    """Re-point the recorded source folder after the evidence was moved to a new
+    location (e.g. a network share copied to a local disk). Only the recorded
+    original_path is rewritten — the files themselves already live in the app's
+    local store, so nothing is copied or moved. Makes the Inspector accurate and
+    future re-imports read from the fast path.
+    """
+    old = req.old_prefix.rstrip("/\\")
+    new = req.new_prefix.rstrip("/\\")
+    if not old or not new:
+        raise HTTPException(status_code=422, detail="old and new folder are required")
+
+    rows = session.exec(select(Evidence)).all()
+    updated = 0
+    for ev in rows:
+        if ev.original_path and ev.original_path.startswith(old):
+            ev.original_path = new + ev.original_path[len(old):]
+            session.add(ev)
+            updated += 1
+    session.commit()
+    log_event(session, "source_relocated", old=old, new=new, updated=updated)
+    return {"updated": updated, "old": old, "new": new}
 
 
 @router.post("/verify-audit")
