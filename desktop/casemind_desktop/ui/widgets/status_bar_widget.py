@@ -143,6 +143,8 @@ class StatusBarWidget(QStatusBar):
         else:
             parts.append("📄 AI לא זמין — מצב ציטוטים בלבד")
 
+        self.showMessage("   ·   ".join(parts))
+
         # full background-jobs breakdown on hover — keeps the bar short but lets
         # the user see exactly what is happening to the material
         self.setToolTip(self._background_summary(s))
