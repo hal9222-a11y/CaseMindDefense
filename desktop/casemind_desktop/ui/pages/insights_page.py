@@ -44,17 +44,20 @@ class InsightsPage(QWidget):
         self.flags_button = QPushButton("🚩 סימון תוכן רגיש")
         self.events_button = QPushButton("📅 חילוץ אירועים")
         self.digest_button = QPushButton("🎧 תקציר הקלטות")
+        self.dupes_button = QPushButton("♊ כפילויות")
+        self.dupes_button.setToolTip("אותו תוכן שיובא בכמה פורמטים (PDF+TXT) — מכפיל ספירות")
         self.summary_button.clicked.connect(self._case_summary)
         self.questions_button.clicked.connect(self._questions)
         self.flags_button.clicked.connect(self._flags)
         self.events_button.clicked.connect(self._events)
         self.digest_button.clicked.connect(self._digest)
+        self.dupes_button.clicked.connect(self._duplicates)
 
         top = QHBoxLayout()
         top.addWidget(title)
         top.addStretch()
         for b in (self.summary_button, self.questions_button, self.flags_button,
-                  self.events_button, self.digest_button):
+                  self.events_button, self.digest_button, self.dupes_button):
             top.addWidget(b)
 
         # text pane for prose insights (summary / questions / digest)
@@ -173,6 +176,33 @@ class InsightsPage(QWidget):
         self._show_table(rows, f"נמצאו {len(flags)} קטעים רגישים   ({header})" if rows
                          else "לא נמצא תוכן רגיש לפי הלקסיקון.")
 
+    def _duplicates(self) -> None:
+        if not self._guard():
+            return
+        self._busy(self.dupes_button, "♊ בודק…")
+        run_async(self.api.insight_duplicates, self.api.current_case_id,
+                  on_done=self._on_duplicates, on_error=self._table_error)
+
+    def _on_duplicates(self, result: dict[str, Any]) -> None:
+        self.dupes_button.setEnabled(True)
+        self.dupes_button.setText("♊ כפילויות")
+        groups = result.get("groups") or []
+        rows = []
+        for g in groups:
+            names = " / ".join(m["filename"] or str(m["id"]) for m in g["members"])
+            reason = "זהה" if g["reason"] == "exact" else f"דומה ({int(g['similarity']*100)}%)"
+            rows.append({
+                "kind": "♊ כפילות",
+                "when": reason,
+                "who": f"{len(g['members'])} פריטים",
+                "what": names,
+                "filename": "",
+                "evidence_id": g["members"][0]["id"],
+                "text": names,
+            })
+        self._show_table(rows, f"נמצאו {len(rows)} קבוצות כפילות — שקול למחוק את העותקים המיותרים"
+                         if rows else "לא נמצאו כפילויות תוכן בתיק.")
+
     def _events(self) -> None:
         if not self._guard():
             return
@@ -230,8 +260,9 @@ class InsightsPage(QWidget):
         QMessageBox.critical(self, "תובנות AI", message)
 
     def _table_error(self, message: str) -> None:
-        self.flags_button.setEnabled(True)
-        self.flags_button.setText("🚩 סימון תוכן רגיש")
-        self.events_button.setEnabled(True)
-        self.events_button.setText("📅 חילוץ אירועים")
+        for b, t in ((self.flags_button, "🚩 סימון תוכן רגיש"),
+                     (self.events_button, "📅 חילוץ אירועים"),
+                     (self.dupes_button, "♊ כפילויות")):
+            b.setEnabled(True)
+            b.setText(t)
         QMessageBox.critical(self, "תובנות AI", message)

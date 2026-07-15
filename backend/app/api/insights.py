@@ -46,6 +46,17 @@ def events(case_id: int = Query(...), session: Session = Depends(get_session)):
     return extract_events(session, case_id)
 
 
+@router.get("/duplicates")
+def duplicates(case_id: int = Query(...), session: Session = Depends(get_session)):
+    """Evidence items that carry the same content in different containers (the
+    same chat as PDF and TXT) — which SHA256 dedup misses. Reports groups for
+    review; nothing is deleted."""
+    from app.services.dedup_service import find_duplicates
+
+    groups = find_duplicates(session, case_id)
+    return {"groups": groups, "count": len(groups)}
+
+
 @router.get("/recordings-digest")
 def recordings_digest(case_id: int = Query(...), session: Session = Depends(get_session)):
     """One-line-per-recording digest: for each transcribed audio/video item,

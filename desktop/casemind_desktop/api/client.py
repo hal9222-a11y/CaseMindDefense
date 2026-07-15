@@ -345,6 +345,13 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def insight_duplicates(self, case_id: int) -> dict[str, Any]:
+        response = self._session.get(
+            self._url("/insights/duplicates"), params={"case_id": case_id}, timeout=300
+        )
+        response.raise_for_status()
+        return response.json()
+
     def recordings_digest(self, case_id: int) -> dict[str, Any]:
         response = self._session.get(
             self._url("/insights/recordings-digest"), params={"case_id": case_id}, timeout=1800
