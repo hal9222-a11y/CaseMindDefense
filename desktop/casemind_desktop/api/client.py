@@ -128,6 +128,14 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def source_folders(self, case_id: int | None = None) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {} if case_id is None else {"case_id": case_id}
+        response = self._session.get(
+            self._url(f"{endpoints.EVIDENCE}/source-folders"), params=params, timeout=60
+        )
+        response.raise_for_status()
+        return response.json()
+
     def import_evidence_folder(self, folder_path: str, case_id: int | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {"path": folder_path}
         if case_id is not None:

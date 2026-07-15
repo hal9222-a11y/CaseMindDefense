@@ -73,6 +73,41 @@ def list_evidence(
     return session.exec(query.order_by(Evidence.id).offset(offset).limit(limit)).all()
 
 
+@router.get("/source-folders")
+def source_folders(
+    case_id: int | None = Query(None),
+    session: Session = Depends(get_session),
+):
+    """Which source folders this case's evidence was imported from, with file
+    counts — so the user can see at a glance what material is in the case and
+    what still lives only on disk."""
+    query = select(Evidence.original_path)
+    if case_id is not None:
+        query = query.where(Evidence.case_id == case_id)
+    counts: dict[str, int] = {}
+    for p in session.exec(query).all():
+        if p:
+            folder = _source_folder_of(p)
+            counts[folder] = counts.get(folder, 0) + 1
+    return sorted(
+        ({"folder": folder, "count": n} for folder, n in counts.items()),
+        key=lambda row: -row["count"],
+    )
+
+
+def _source_folder_of(path: str) -> str:
+    """Group an original_path into its source folder: drive + two components
+    (F:\\AMIR-1\\Investigations), or the parent folder for shallower paths.
+    ponytail: fixed grouping depth; upgrade to a smallest-covering-set if
+    imports ever come from deep scattered trees this lumps together."""
+    from pathlib import PureWindowsPath
+
+    parts = PureWindowsPath(path).parts
+    if len(parts) > 3:
+        return str(PureWindowsPath(*parts[:3]))
+    return str(PureWindowsPath(path).parent)
+
+
 @router.get("/{evidence_id}")
 def get_evidence(evidence_id: int, session: Session = Depends(get_session)):
     ev = session.get(Evidence, evidence_id)

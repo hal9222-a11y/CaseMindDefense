@@ -53,6 +53,7 @@ class EvidencePage(QWidget):
         self.toolbar.new_case_clicked.connect(self._create_case)
         self.toolbar.delete_case_clicked.connect(self._delete_case)
         self.toolbar.report_clicked.connect(self._generate_report)
+        self.toolbar.folders_clicked.connect(self._show_source_folders)
         self.toolbar.case_changed.connect(self._on_case_changed)
 
         self._pending_highlight: str | None = None
@@ -157,6 +158,25 @@ class EvidencePage(QWidget):
                 f"- {e.get('path', '')}: {e.get('error', '')}" for e in errors[:5]
             )
         QMessageBox.information(self, "Folder Import", message)
+
+    def _show_source_folders(self) -> None:
+        case_name = self.toolbar.case_selector.currentText()
+        run_async(
+            self.api.source_folders,
+            self.toolbar.current_case_id(),
+            on_done=lambda rows: self._on_source_folders(case_name, rows),
+            on_error=lambda err: QMessageBox.critical(self, "ספריות מקור", err),
+        )
+
+    def _on_source_folders(self, case_name: str, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            QMessageBox.information(self, "ספריות מקור", "אין עדיין ראיות בתיק הזה.")
+            return
+        lines = [f"{r['folder']}  —  {r['count']} קבצים" for r in rows]
+        QMessageBox.information(
+            self, "ספריות מקור",
+            f"הראיות בתיק \"{case_name}\" נקלטו מהספריות:\n\n" + "\n".join(lines),
+        )
 
     def _generate_report(self) -> None:
         run_async(
