@@ -50,6 +50,12 @@ class PreviewWidget(QWidget):
         self._translate_button.setEnabled(False)
         self._translate_button.clicked.connect(self._translate)
 
+        # AI brief of the current item — "help me understand this"
+        self._summarize_button = QPushButton("🧠 סכם ב-AI")
+        self._summarize_button.setToolTip("סיכום קצר בעברית של הפריט הנוכחי — מי מופיע ומה עיקרי הדברים")
+        self._summarize_button.setEnabled(False)
+        self._summarize_button.clicked.connect(self._summarize)
+
         self._image_label = QLabel()
         self._image_label.setAlignment(Qt.AlignCenter)
         image_scroll = QScrollArea()
@@ -68,6 +74,7 @@ class PreviewWidget(QWidget):
         header = QHBoxLayout()
         header.addWidget(QLabel("Preview"))
         header.addStretch()
+        header.addWidget(self._summarize_button)
         header.addWidget(self._translate_button)
 
         layout = QVBoxLayout()
@@ -79,6 +86,9 @@ class PreviewWidget(QWidget):
         self._current_id = item.get("id")
         self._highlight = highlight
         mime = item.get("mime_type") or ""
+        # summarization works off the indexed chunks, so it is available for any
+        # item type (chat, recording, document, UFDR) once something is selected
+        self._summarize_button.setEnabled(self._current_id is not None)
 
         if mime.startswith("text/"):
             self._show_message("Loading text preview...")
@@ -158,6 +168,43 @@ class PreviewWidget(QWidget):
             pixmap = pixmap.scaledToWidth(MAX_IMAGE_WIDTH, Qt.SmoothTransformation)
         self._image_label.setPixmap(pixmap)
         self._stack.setCurrentIndex(2)
+
+    def _summarize(self) -> None:
+        if self._current_id is None:
+            return
+        self._summarize_button.setEnabled(False)
+        self._summarize_button.setText("🧠 מסכם…")
+        run_async(
+            self.api.summarize_evidence, self._current_id,
+            on_done=self._on_summarized, on_error=self._on_summarize_error,
+        )
+
+    def _on_summarized(self, result: dict[str, Any]) -> None:
+        self._summarize_button.setEnabled(True)
+        self._summarize_button.setText("🧠 סכם ב-AI")
+        summary = result.get("summary")
+        if not summary:
+            reason = {
+                "no_llm": "אין מודל שפה זמין כרגע (Ollama).",
+                "no_text": "אין טקסט מאונדקס לפריט הזה עדיין.",
+                "llm_failed": "המודל לא החזיר סיכום. נסה שוב.",
+            }.get(result.get("reason"), "לא ניתן להפיק סיכום.")
+            QMessageBox.information(self, "סיכום AI", reason)
+            return
+        people = result.get("people") or []
+        who = ("אנשים בפריט: " + ", ".join(people[:12]) + "\n\n") if people else ""
+        # show it in the text pane above the source, so the summary is a lens
+        # over the material rather than a popup you lose
+        self._text_view.setPlainText(
+            f"[סיכום AI — כלי עזר להבנה, לא ראיה · {result.get('model','')}]\n"
+            f"{who}{summary}\n\n———\n[מקור]\n{self._current_text}"
+        )
+        self._stack.setCurrentIndex(1)
+
+    def _on_summarize_error(self, message: str) -> None:
+        self._summarize_button.setEnabled(True)
+        self._summarize_button.setText("🧠 סכם ב-AI")
+        QMessageBox.critical(self, "סיכום AI", message)
 
     def _translate(self) -> None:
         # translating only what you highlighted is usually what you want, and on

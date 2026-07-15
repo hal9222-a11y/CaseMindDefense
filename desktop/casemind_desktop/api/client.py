@@ -316,6 +316,42 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    # --- case-level AI insights ---
+    def case_summary(self, case_id: int) -> dict[str, Any]:
+        response = self._session.get(
+            self._url("/insights/case-summary"), params={"case_id": case_id}, timeout=600
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def insight_questions(self, case_id: int) -> dict[str, Any]:
+        response = self._session.get(
+            self._url("/insights/questions"), params={"case_id": case_id}, timeout=600
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def insight_flags(self, case_id: int) -> dict[str, Any]:
+        response = self._session.get(
+            self._url("/insights/flags"), params={"case_id": case_id}, timeout=120
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def insight_events(self, case_id: int) -> list[dict[str, Any]]:
+        response = self._session.get(
+            self._url("/insights/events"), params={"case_id": case_id}, timeout=900
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def recordings_digest(self, case_id: int) -> dict[str, Any]:
+        response = self._session.get(
+            self._url("/insights/recordings-digest"), params={"case_id": case_id}, timeout=1800
+        )
+        response.raise_for_status()
+        return response.json()
+
     def person_graph(self, case_id: int) -> dict[str, Any]:
         response = self._session.get(
             self._url(f"{endpoints.PERSONS}/graph"),
@@ -357,6 +393,14 @@ class ApiClient:
     def get_evidence(self, evidence_id: int) -> dict[str, Any]:
         response = self._session.get(
             self._url(f"{endpoints.EVIDENCE}/{evidence_id}"), timeout=REQUEST_TIMEOUT
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def summarize_evidence(self, evidence_id: int) -> dict[str, Any]:
+        # LLM-backed; on CPU (GPU busy with transcription) this can take minutes
+        response = self._session.post(
+            self._url(f"{endpoints.EVIDENCE}/{evidence_id}/summarize"), timeout=600,
         )
         response.raise_for_status()
         return response.json()

@@ -209,6 +209,18 @@ def reindex_evidence(
     return {"id": evidence_id, "status": "processing"}
 
 
+@router.post("/{evidence_id}/summarize")
+def summarize_evidence_endpoint(evidence_id: int, session: Session = Depends(get_session)):
+    """AI 'help me understand this' brief for one evidence item — grounded only
+    in the item's own text. A reading aid, not evidence."""
+    from app.services.summary_service import summarize_evidence
+
+    ev = session.get(Evidence, evidence_id)
+    if not ev:
+        raise HTTPException(status_code=404, detail="evidence not found")
+    return summarize_evidence(session, evidence_id)
+
+
 @router.get("/{evidence_id}/content")
 def get_evidence_content(
     evidence_id: int,

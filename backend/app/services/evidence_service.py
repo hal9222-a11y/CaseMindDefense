@@ -44,6 +44,7 @@ SUPPORTED_EXTENSIONS = {
     ".xml",  # forensic export manifests / call logs — data lives in attributes
     ".csv",  # call logs / cell records ship as CSV in forensic exports
     ".html", ".htm",  # saved pages / report exports — indexed as tag-stripped text
+    ".ufdr",  # Cellebrite phone-extraction report (zip): chats + contacts inside
     *MEDIA_EXTENSIONS,
 }
 
@@ -94,6 +95,27 @@ def register_evidence(session: Session, source_path: str, case_id: int | None = 
     return evidence
 
 
+def _ufdr_chunks(stored: Path) -> list[dict]:
+    """Every conversation in a Cellebrite report as message chunks, plus a
+    contacts-directory chunk so the phone book (name <-> number) is searchable
+    and its names are extracted as people. Each chunk's speakers (name + phone)
+    flow through the same entity/graph pipeline as a WhatsApp export."""
+    from app.services.ufdr_service import extract_ufdr
+
+    data = extract_ufdr(stored)
+    chunks: list[dict] = []
+    for chat in data["chats"]:
+        chunks.extend(chat["chunks"])
+    if data["contacts"]:
+        directory = "\n".join(f"{name}: +{num}" for num, name in data["contacts"].items())
+        chunks.append({
+            "text": "אנשי קשר (מדריך המכשיר):\n" + directory,
+            "source_location": "contacts",
+            "speakers": list(data["contacts"].values()),
+        })
+    return chunks
+
+
 def _drop_old_index(session: Session, evidence_id: int) -> None:
     for old_chunk in session.exec(
         select(EvidenceChunk).where(EvidenceChunk.evidence_id == evidence_id)
@@ -121,7 +143,10 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
 
     stored = Path(evidence.stored_path)
 
-    if stored.suffix.lower() in MEDIA_EXTENSIONS:
+    if stored.suffix.lower() == ".ufdr":
+        chunks = _ufdr_chunks(stored)
+        extraction_method = "ufdr"
+    elif stored.suffix.lower() in MEDIA_EXTENSIONS:
         media_chunks = transcribe_to_chunks(stored)
         if media_chunks is None:
             evidence.status = "transcription_unavailable"
