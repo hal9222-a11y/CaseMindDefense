@@ -113,6 +113,16 @@ def run_forever() -> None:
         try:
             background_control.wait_while_paused()  # user turned background work off
             with Session(get_engine()) as session:
+                # Transcription (Whisper) and translation (Ollama) both want the
+                # GPU, and on a small card they do not fit together — the LLM
+                # call just times out. Let indexing/transcription finish first;
+                # you cannot translate what is not indexed anyway.
+                still_indexing = session.exec(
+                    select(Evidence.id).where(Evidence.status == "processing").limit(1)
+                ).first()
+                if still_indexing is not None:
+                    time.sleep(IDLE_SLEEP_SECONDS)
+                    continue
                 evidence = _next_untranslated(session)
                 if evidence is None:
                     time.sleep(IDLE_SLEEP_SECONDS)  # backlog clear; check again later
