@@ -53,6 +53,7 @@ class GraphPage(QWidget):
         self.mode_selector = QComboBox()
         self.mode_selector.addItem("Entities", "entities")
         self.mode_selector.addItem("People (relations)", "people")
+        self.mode_selector.addItem("Knowledge (AI)", "knowledge")
         self.mode_selector.currentIndexChanged.connect(self._on_mode_changed)
 
         self.refresh_button = QPushButton("Refresh")
@@ -120,27 +121,30 @@ class GraphPage(QWidget):
         return self.mode_selector.currentData()
 
     def _on_mode_changed(self, _index: int) -> None:
-        people = self._mode() == "people"
+        mode = self._mode()
         # the tuning controls only apply to the co-occurrence graph
         for control in self._entity_controls:
-            control.setVisible(not people)
-        self.legend.setText(
-            "אנשים · קו = קשר (אח / אבא של…) · double-click = חיפוש"
-            if people
-            else "גודל = אזכורים · קו = הוזכרו באותו משפט · double-click = חיפוש"
-        )
+            control.setVisible(mode == "entities")
+        self.legend.setText({
+            "people": "אנשים · קו = קשר (אח / אבא של…) · double-click = חיפוש",
+            "knowledge": "זהויות מאוחדות + טלפונים/מקומות/ארגונים · קו = קשר מצוטט · double-click = חיפוש",
+        }.get(mode, "גודל = אזכורים · קו = הוזכרו באותו משפט · double-click = חיפוש"))
         self.refresh()
 
     def refresh(self) -> None:
         self.refresh_button.setEnabled(False)
-        if self._mode() == "people":
-            if self.api.current_case_id is None:
-                self.refresh_button.setEnabled(True)
-                self.scene.clear()
-                self.scene.addText("בחר תיק ספציפי בדף Evidence כדי לראות את רשת האנשים.")
-                return
+        mode = self._mode()
+        if mode in ("people", "knowledge") and self.api.current_case_id is None:
+            self.refresh_button.setEnabled(True)
+            self.scene.clear()
+            self.scene.addText("בחר תיק ספציפי בדף Evidence כדי לראות את הרשת.")
+            return
+        if mode == "people":
             run_async(self.api.person_graph, self.api.current_case_id,
                       on_done=self._on_people_loaded, on_error=self._on_failed)
+        elif mode == "knowledge":
+            run_async(self.api.knowledge_graph, self.api.current_case_id,
+                      on_done=self._on_knowledge_loaded, on_error=self._on_failed)
         else:
             run_async(
                 self.api.entity_graph,
@@ -163,6 +167,29 @@ class GraphPage(QWidget):
     def _on_people_loaded(self, graph: dict) -> None:
         self.refresh_button.setEnabled(True)
         self._draw_people(graph)
+
+    def _on_knowledge_loaded(self, graph: dict) -> None:
+        self.refresh_button.setEnabled(True)
+        # adapt the knowledge shape (id/type/label/mentions + typed edges) to
+        # the entity renderer, which draws by name: label shows the canonical
+        # form, aliases ride in the tooltip-ish suffix
+        id_to_label: dict[str, str] = {}
+        nodes = []
+        for n in graph.get("nodes", []):
+            label = n["label"]
+            if n.get("aliases"):
+                label = f"{label} (+{len(n['aliases'])})"
+            id_to_label[n["id"]] = label
+            nodes.append({"entity": label, "type": n["type"], "count": n.get("mentions", 0)})
+        edges = [
+            {
+                "a": id_to_label[e["a"]], "b": id_to_label[e["b"]],
+                "weight": max(e.get("weight", 0), 1),
+            }
+            for e in graph.get("edges", [])
+            if e["a"] in id_to_label and e["b"] in id_to_label
+        ]
+        self._draw({"nodes": nodes, "edges": edges})
 
     def _on_failed(self, error: str) -> None:
         self.refresh_button.setEnabled(True)

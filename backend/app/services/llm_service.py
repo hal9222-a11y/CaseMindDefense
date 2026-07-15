@@ -253,6 +253,11 @@ def to_hebrew_name(name: str) -> str | None:
     return out.splitlines()[0].strip().strip('"\'').strip()
 
 
+def complete(prompt: str) -> str | None:
+    """One free-form completion with the active model; None when unavailable."""
+    return _chat([{"role": "user", "content": prompt}])
+
+
 def synthesize_answer(question: str, citations: list[dict]) -> str | None:
     """Ask the local LLM to answer from the cited excerpts.
 

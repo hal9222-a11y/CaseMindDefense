@@ -273,6 +273,49 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    # --- AI analysis: entity resolution / knowledge graph / inference ---
+    def suggest_identities(self, case_id: int) -> list[dict[str, Any]]:
+        response = self._session.get(
+            self._url(f"{endpoints.PERSONS}/suggest-identities"),
+            params={"case_id": case_id}, timeout=120,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def resolve_identity(self, case_id: int, canonical: str, aliases: list[str]) -> dict[str, Any]:
+        response = self._session.post(
+            self._url(f"{endpoints.PERSONS}/resolve"),
+            json={"case_id": case_id, "canonical": canonical, "aliases": aliases},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def auto_resolve_identities(self, case_id: int) -> dict[str, Any]:
+        response = self._session.post(
+            self._url(f"{endpoints.PERSONS}/auto-resolve"),
+            params={"case_id": case_id}, timeout=300,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def knowledge_graph(self, case_id: int) -> dict[str, Any]:
+        response = self._session.get(
+            self._url(f"{endpoints.PERSONS}/knowledge-graph"),
+            params={"case_id": case_id}, timeout=120,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def suggest_relations(self, case_id: int) -> list[dict[str, Any]]:
+        # one LLM round-trip per candidate pair — allow real time
+        response = self._session.get(
+            self._url(f"{endpoints.PERSONS}/suggest-relations"),
+            params={"case_id": case_id}, timeout=600,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def person_graph(self, case_id: int) -> dict[str, Any]:
         response = self._session.get(
             self._url(f"{endpoints.PERSONS}/graph"),

@@ -128,6 +128,61 @@ def graph(case_id: int = Query(...), session: Session = Depends(get_session)):
     return person_graph(session, case_id)
 
 
+@router.get("/suggest-identities")
+def suggest_identities_endpoint(case_id: int = Query(...), session: Session = Depends(get_session)):
+    """Entity resolution suggestions: clusters of written names (רינה / Рина /
+    Rina / Риночка) that are likely the same human — cross-script
+    transliteration, Russian diminutives, fuzzy spelling. Offline and
+    deterministic; nothing merges until accepted."""
+    from app.services.resolution_service import suggest_identities
+
+    return suggest_identities(session, case_id)
+
+
+class ResolveIdentityRequest(BaseModel):
+    case_id: int
+    canonical: str = Field(min_length=1, max_length=200)
+    aliases: list[str] = Field(default_factory=list)
+
+
+@router.post("/resolve")
+def resolve_identity(req: ResolveIdentityRequest, session: Session = Depends(get_session)):
+    """Accept one identity cluster: find-or-create the person and attach the
+    other written forms as alias links (visible, deletable, audited)."""
+    from app.services.resolution_service import apply_identity
+
+    return apply_identity(session, req.case_id, req.canonical, req.aliases)
+
+
+@router.post("/auto-resolve")
+def auto_resolve_endpoint(case_id: int = Query(...), session: Session = Depends(get_session)):
+    """Apply every high-confidence identity cluster automatically; lower ones
+    stay in /suggest-identities for the user to judge."""
+    from app.services.resolution_service import auto_resolve
+
+    return auto_resolve(session, case_id)
+
+
+@router.get("/knowledge-graph")
+def knowledge_graph_endpoint(case_id: int = Query(...), session: Session = Depends(get_session)):
+    """The case as one network: resolved people (all their written forms folded
+    into one node), phones, locations, organizations and vehicles — with typed,
+    evidence-cited edges."""
+    from app.services.knowledge_service import knowledge_graph
+
+    return knowledge_graph(session, case_id)
+
+
+@router.get("/suggest-relations")
+def suggest_relations_endpoint(case_id: int = Query(...), session: Session = Depends(get_session)):
+    """LLM-read relation suggestions for strongly co-mentioned people who have
+    no labeled relation yet. Suggestions carry the passages they were read
+    from; accept one via POST /{person_id}/links (kind=relation)."""
+    from app.services.inference_service import suggest_relations
+
+    return suggest_relations(session, case_id)
+
+
 @router.get("")
 def list_persons(case_id: int = Query(...), session: Session = Depends(get_session)):
     persons = session.exec(
