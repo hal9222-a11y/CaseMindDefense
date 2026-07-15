@@ -6,12 +6,8 @@ import re
 from sqlmodel import Session, select
 
 from app.models.evidence import Evidence, EvidenceChunk
-from app.services.embedding_service import (
-    cosine_similarity,
-    deserialize_embedding,
-    embed_text,
-    embedding_model_name,
-)
+from app.services import search_index
+from app.services.embedding_service import embed_text, embedding_model_name
 from app.services.scope import case_evidence_ids
 
 
@@ -84,57 +80,37 @@ def semantic_search(
 
     allowed = case_evidence_ids(session, case_id)
     current_model = embedding_model_name()
-    chunks = session.exec(select(EvidenceChunk)).all()
+
+    # the cached NumPy index scores every chunk in one matrix-vector product and
+    # returns only the top-k ids; we then fetch text + filename for just those.
+    # (The old path deserialized every embedding string on every query.)
+    hits = search_index.search(session, query_embedding, current_model, allowed, limit)
+    if not hits:
+        return []
+
+    chunk_texts = {
+        c.id: c.text
+        for c in session.exec(
+            select(EvidenceChunk).where(
+                EvidenceChunk.id.in_([h["chunk_id"] for h in hits])
+            )
+        ).all()
+    }
     evidence_cache: dict[int, Evidence | None] = {}
     results: list[dict] = []
-
-    for chunk in chunks:
-        if allowed is not None and chunk.evidence_id not in allowed:
-            continue
-
-        # same dimension does not mean same vector space (MiniLM and e5 are
-        # both 384-d) - compare by recorded model and require a reindex
-        if chunk.embedding_model and chunk.embedding_model != current_model:
-            logger.warning(
-                "Skipping chunk embedded with a different model "
-                "(chunk_id=%s model=%s current=%s) - reindex the evidence",
-                chunk.id, chunk.embedding_model, current_model,
-            )
-            continue
-
-        chunk_embedding = deserialize_embedding(chunk.embedding or "")
-
-        if len(chunk_embedding) != len(query_embedding):
-            logger.warning(
-                "Skipping chunk with embedding dimension mismatch: "
-                "chunk_id=%s evidence_id=%s query_dim=%s chunk_dim=%s",
-                chunk.id,
-                chunk.evidence_id,
-                len(query_embedding),
-                len(chunk_embedding),
-            )
-            continue
-
-        score = cosine_similarity(query_embedding, chunk_embedding)
-
-        if score <= 0:
-            continue
-
-        if chunk.evidence_id not in evidence_cache:
-            evidence_cache[chunk.evidence_id] = session.get(Evidence, chunk.evidence_id)
-
-        evidence = evidence_cache[chunk.evidence_id]
-
+    for hit in hits:
+        ev_id = hit["evidence_id"]
+        if ev_id not in evidence_cache:
+            evidence_cache[ev_id] = session.get(Evidence, ev_id)
+        evidence = evidence_cache[ev_id]
         results.append(
             {
-                "evidence_id": chunk.evidence_id,
+                "evidence_id": ev_id,
                 "filename": evidence.filename if evidence else None,
-                "chunk_index": chunk.chunk_index,
-                "source_location": chunk.source_location,
-                "score": round(float(score), 6),
-                "text": chunk.text,
+                "chunk_index": hit["chunk_index"],
+                "source_location": hit["source_location"],
+                "score": hit["score"],
+                "text": chunk_texts.get(hit["chunk_id"]),
             }
         )
-
-    results.sort(key=lambda item: item["score"], reverse=True)
-    return results[:limit]
+    return results
