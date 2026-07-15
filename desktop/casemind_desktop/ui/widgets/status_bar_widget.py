@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QStatusBar
+from PySide6.QtWidgets import QPushButton, QStatusBar
 
 from api.client import ApiClient
 from backend_launcher import ensure_backend
@@ -23,6 +23,15 @@ class StatusBarWidget(QStatusBar):
         super().__init__()
         self.api = api
         self._reviving = False
+        self._background_enabled = True
+
+        # a pause/resume control for background processing, right where the user
+        # watches the activity
+        self._bg_button = QPushButton("⏸️ השהה עיבוד רקע")
+        self._bg_button.setFlat(True)
+        self._bg_button.clicked.connect(self._toggle_background)
+        self.addPermanentWidget(self._bg_button)
+
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._poll)
 
@@ -34,6 +43,25 @@ class StatusBarWidget(QStatusBar):
 
     def _poll(self) -> None:
         run_async(self.api.status, on_done=self._on_status)
+
+    def _toggle_background(self) -> None:
+        want = not self._background_enabled  # flip
+        self._bg_button.setEnabled(False)
+        run_async(self.api.set_background, want,
+                  on_done=self._on_background_set,
+                  on_error=lambda _e: self._bg_button.setEnabled(True))
+
+    def _on_background_set(self, result: dict) -> None:
+        self._background_enabled = bool(result.get("background_enabled", True))
+        self._apply_background_button()
+        self._bg_button.setEnabled(True)
+        self._poll()
+
+    def _apply_background_button(self) -> None:
+        if self._background_enabled:
+            self._bg_button.setText("⏸️ השהה עיבוד רקע")
+        else:
+            self._bg_button.setText("▶️ הפעל עיבוד רקע")
 
     def _revive_backend(self) -> None:
         """Restart the backend the moment it goes missing, rather than leaving
@@ -66,8 +94,15 @@ class StatusBarWidget(QStatusBar):
             return
         self._reviving = False
 
+        # keep the toggle in sync with the backend's real state
+        self._background_enabled = s.get("background_enabled", True)
+        self._apply_background_button()
+
         total = s.get("evidence_total", 0)
         parts = []
+        if not self._background_enabled and (s.get("processing") or s.get("to_translate")):
+            # be clear that outstanding work is paused, not progressing
+            parts.append("⏸️ עיבוד הרקע מושהה")
         if s.get("busy"):
             n = s.get("processing", 0)
             current = s.get("current") or {}

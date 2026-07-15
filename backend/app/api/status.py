@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.db import get_session
 from app.models.evidence import Evidence
-from app.services import llm_service
+from app.services import background_control, llm_service
 from app.services.evidence_service import MEDIA_EXTENSIONS
 from app.services.text_service import IMAGE_EXTENSIONS
 
@@ -86,4 +86,5 @@ def status(session: Session = Depends(get_session)):
         "llm_available": llm_service.ollama_available(),
         "llm_model": llm_service.active_model(),
         "llm_provider": llm_service.LLM_PROVIDER,  # "ollama" (local) or "gemini" (cloud)
+        "background_enabled": not background_control.is_paused(),
     }

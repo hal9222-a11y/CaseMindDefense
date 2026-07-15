@@ -28,6 +28,21 @@ def _drive_of(path: str) -> str:
     return path[:2]
 
 
+class BackgroundRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/background")
+def set_background(req: BackgroundRequest):
+    """Turn background material processing (translation + re-indexing) on or off
+    at runtime. Pausing takes effect between files — whatever is mid-process
+    finishes, nothing new starts. Not persisted: a restart resumes working."""
+    from app.services import background_control
+
+    background_control.set_paused(not req.enabled)
+    return {"background_enabled": req.enabled}
+
+
 @router.get("/source-root")
 def source_root(session: Session = Depends(get_session)):
     """The folder most of the evidence was imported FROM. Shown so the user can

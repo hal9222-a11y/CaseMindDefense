@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from app.db import get_engine
 from app.models.evidence import Evidence, EvidenceChunk
-from app.services import llm_service
+from app.services import background_control, llm_service
 
 logger = logging.getLogger("app.translate_worker")
 
@@ -111,6 +111,7 @@ def run_forever() -> None:
     llm_service.mark_background()  # this thread's LLM calls yield to the user
     while True:
         try:
+            background_control.wait_while_paused()  # user turned background work off
             with Session(get_engine()) as session:
                 evidence = _next_untranslated(session)
                 if evidence is None:

@@ -233,9 +233,12 @@ def resume_pending_indexing() -> int:
         return 0
     logger.warning("resuming %d evidence stuck in 'processing'", len(pending))
 
+    from app.services import background_control
+
     done = 0
     with Session(get_engine()) as session:
         for evidence_id in pending:
+            background_control.wait_while_paused()  # user paused background work
             try:
                 index_evidence(session, evidence_id)
                 done += 1

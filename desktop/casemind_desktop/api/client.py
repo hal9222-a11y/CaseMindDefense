@@ -371,6 +371,13 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def set_background(self, enabled: bool) -> dict[str, Any]:
+        response = self._session.post(
+            self._url("/admin/background"), json={"enabled": enabled}, timeout=30
+        )
+        response.raise_for_status()
+        return response.json()
+
     def source_root(self) -> dict[str, Any]:
         response = self._session.get(self._url("/admin/source-root"), timeout=30)
         response.raise_for_status()
