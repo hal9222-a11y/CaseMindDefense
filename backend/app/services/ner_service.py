@@ -35,19 +35,45 @@ LABEL_MAP = {
 }
 
 
+# "auto" = GPU when one is present, else CPU. Force with CASEMIND_NER_DEVICE.
+NER_DEVICE = os.getenv("CASEMIND_NER_DEVICE", "auto")
+
+
 @lru_cache(maxsize=1)
 def _load_ner():
     try:
         from transformers import pipeline
-
-        return pipeline(
-            "token-classification",
-            model=NER_MODEL_NAME,
-            aggregation_strategy="simple",
-        )
     except Exception as exc:
         logger.warning("NER model unavailable, using regex fallback: %s", exc)
         return None
+
+    # Run NER on the GPU when it's free. CPU BERT inference over a phone dump's
+    # tens of thousands of chunks runs for HOURS; on the GPU it's minutes.
+    # Indexing (NER) and transcription (Whisper) never run at once - the index
+    # queue is single-threaded - so they don't fight over the 4GB card. Try GPU
+    # first, fall back to CPU on any failure (e.g. OOM) rather than dropping to
+    # the regex-only path, which would lose all model entities.
+    try:
+        import torch
+
+        want_gpu = NER_DEVICE != "cpu" and torch.cuda.is_available()
+    except Exception:
+        want_gpu = False
+
+    for device in ([0, -1] if want_gpu else [-1]):
+        try:
+            ner = pipeline(
+                "token-classification",
+                model=NER_MODEL_NAME,
+                aggregation_strategy="simple",
+                device=device,
+            )
+            logger.info("NER on %s", "GPU (cuda:0)" if device == 0 else "CPU")
+            return ner
+        except Exception as exc:
+            logger.warning("NER load on device=%s failed: %s", device, exc)
+    logger.warning("NER model unavailable, using regex fallback")
+    return None
 
 
 def extract_entities(text: str) -> list[dict]:
