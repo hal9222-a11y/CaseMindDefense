@@ -138,6 +138,42 @@ def import_file_endpoint(
     return _evidence_dict(ev)
 
 
+@router.post("/{evidence_id}/extract-media")
+def extract_media_endpoint(
+    evidence_id: int,
+    background: BackgroundTasks,
+    session: Session = Depends(get_session),
+):
+    """Pull the voice notes / videos out of an already-imported UFDR and queue
+    them for transcription. Runs in the background — a 45GB report takes a
+    while to stream; watch the log / evidence counts for progress."""
+    from app.models.evidence import Evidence
+    from app.services.ufdr_service import extract_ufdr_media
+
+    ev = session.get(Evidence, evidence_id)
+    if ev is None:
+        raise HTTPException(status_code=404, detail="evidence not found")
+    if not ev.stored_path.lower().endswith(".ufdr"):
+        raise HTTPException(status_code=400, detail="not a UFDR evidence")
+
+    def _run() -> None:
+        import logging
+
+        from app.db import get_engine
+        from sqlmodel import Session as _Session
+
+        try:
+            with _Session(get_engine()) as s:
+                extract_ufdr_media(s, evidence_id)
+        except Exception:
+            logging.getLogger("app.ufdr").exception("media extraction failed for evidence %s", evidence_id)
+            return
+        _index_in_background()  # the new recordings are status=processing; index them
+
+    background.add_task(_run)
+    return {"started": True, "evidence_id": evidence_id}
+
+
 @router.post("/import-folder")
 def import_folder_endpoint(
     req: ImportFolderRequest,

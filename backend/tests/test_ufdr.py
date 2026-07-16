@@ -166,3 +166,45 @@ def test_extract_and_index_end_to_end(tmp_path):
         assert any("7474" in p for p in phones)        # phone in a body was extracted
 
         client.delete(f"/cases/{case['id']}")
+
+
+def test_extract_ufdr_media_registers_recordings(tmp_path):
+    """Voice notes/videos inside the UFDR become their own evidence rows
+    (status=processing, so the queue transcribes them), tiny UI sounds are
+    skipped, non-media is ignored, and a second run dedupes everything."""
+    import os
+
+    from fastapi.testclient import TestClient
+    from sqlmodel import Session, select
+
+    from app.main import app
+    from app.db import get_engine
+    from app.models.evidence import Evidence
+    from app.services.ufdr_service import extract_ufdr_media
+
+    p = tmp_path / f"media_{uuid.uuid4().hex[:8]}.ufdr"
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("report.xml", REPORT_XML)
+        z.writestr("Audio/voice_note_1.opus", os.urandom(10_000))
+        z.writestr("Audio/beep.opus", os.urandom(100))          # under min_bytes
+        z.writestr("Video/clip.mp4", os.urandom(20_000))
+        z.writestr("Images/photo.jpg", os.urandom(10_000))      # not audio/video
+
+    with TestClient(app) as client:
+        ev = client.post("/evidence/import-file", json={"path": str(p)}).json()
+        with Session(get_engine()) as session:
+            stats = extract_ufdr_media(session, ev["id"])
+            assert stats == {"registered": 2, "duplicates": 0, "skipped_small": 1, "errors": 0, "stopped_low_disk": False}
+
+            ufdr_stored = session.get(Evidence, ev["id"]).stored_path
+            rows = session.exec(select(Evidence).where(Evidence.original_path.like("%::%"))).all()
+            mine = [r for r in rows if r.original_path.startswith(ufdr_stored)]
+            names = {r.filename for r in mine}
+            assert names == {"voice_note_1.opus", "clip.mp4"}
+            assert all(r.status == "processing" for r in mine)
+            # chain of custody: each row names the ufdr AND the entry inside it
+            assert any("Audio/voice_note_1.opus" in r.original_path for r in mine)
+
+            # second run: everything already known
+            stats2 = extract_ufdr_media(session, ev["id"])
+            assert stats2["registered"] == 0 and stats2["duplicates"] == 2

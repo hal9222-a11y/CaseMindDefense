@@ -263,6 +263,96 @@ def chat_to_chunks(chat: dict, chat_name: str, max_chars: int = 1200) -> list[di
     return chunks
 
 
+def extract_ufdr_media(session, evidence_id: int, min_bytes: int = 5120) -> dict:
+    """Register the audio/video files INSIDE a .ufdr as separate evidence rows,
+    so the normal queue transcribes them like any imported recording.
+
+    Voice notes and videos are stored in the UFDR zip but extract_ufdr only
+    reads chats+contacts text — until now those recordings were invisible.
+    Each media entry is extracted to a temp file, registered (hash, dedupe,
+    copy into the store, status=processing), and the temp deleted — so peak
+    extra disk usage is one file, and duplicates across the two phones
+    collapse via the sha256 dedupe.
+
+    original_path is rewritten to '<ufdr stored_path>::<entry>' so the chain
+    of custody records exactly where inside which report the recording lived.
+
+    Skips: non-media entries, files under min_bytes (notification beeps, UI
+    sounds), and stops cleanly if the store drive runs low on space.
+    """
+    import shutil as _shutil
+    import tempfile
+
+    from app.core.settings import get_settings
+    from app.models.evidence import Evidence
+    from app.services.evidence_service import DuplicateEvidenceError, register_evidence
+    from app.services.transcription_service import MEDIA_EXTENSIONS
+
+    ev = session.get(Evidence, evidence_id)
+    if ev is None or Path(ev.stored_path).suffix.lower() != ".ufdr":
+        raise ValueError(f"evidence {evidence_id} is not a UFDR")
+
+    store_dir = get_settings().evidence_store_dir
+    stats = {"registered": 0, "duplicates": 0, "skipped_small": 0, "errors": 0, "stopped_low_disk": False}
+
+    with zipfile.ZipFile(ev.stored_path) as z:
+        for info in z.infolist():
+            ext = Path(info.filename).suffix.lower()
+            if info.is_dir() or ext not in MEDIA_EXTENSIONS:
+                continue
+            if info.file_size < min_bytes:
+                stats["skipped_small"] += 1
+                continue
+            # 2GB reserve: never let an extraction be the thing that fills the drive
+            if _shutil.disk_usage(store_dir).free < info.file_size + 2 * 1024**3:
+                logger.warning("UFDR media extraction stopped: low disk (%s left)", _shutil.disk_usage(store_dir).free)
+                stats["stopped_low_disk"] = True
+                break
+
+            # temp on the store drive; keep the original basename so the evidence
+            # row's filename is the real one from the phone
+            tmp_dir = Path(tempfile.mkdtemp(prefix="ufdr_media_", dir=store_dir))
+            tmp = tmp_dir / Path(info.filename).name
+            try:
+                with z.open(info) as src, open(tmp, "wb") as dst:
+                    _shutil.copyfileobj(src, dst)
+                new_ev = register_evidence(session, str(tmp), case_id=ev.case_id)
+                new_ev.original_path = f"{ev.stored_path}::{info.filename}"
+                session.add(new_ev)
+                session.commit()
+                stats["registered"] += 1
+            except DuplicateEvidenceError:
+                stats["duplicates"] += 1
+            except Exception as exc:
+                stats["errors"] += 1
+                # a failed commit leaves the session dirty; roll back so the next
+                # file's register doesn't trip over this one's leftovers
+                session.rollback()
+                logger.warning("UFDR media extract failed for %s: %s", info.filename, exc)
+            finally:
+                # best-effort cleanup: an AV scanner briefly locking the temp file
+                # must not abort the whole (possibly hours-long) extraction
+                try:
+                    tmp.unlink(missing_ok=True)
+                    tmp_dir.rmdir()
+                except OSError as exc:
+                    logger.warning("temp cleanup failed for %s: %s", tmp, exc)
+
+    # one audit entry per UFDR (not per file — the per-file provenance lives in
+    # each evidence row's original_path '<ufdr>::<entry>')
+    from app.services.audit_service import log_event
+
+    log_event(
+        session,
+        "ufdr_media_extracted",
+        evidence_id=evidence_id,
+        detail=str(stats),
+    )
+    session.commit()
+    logger.info("UFDR media extraction for evidence %s: %s", evidence_id, stats)
+    return stats
+
+
 def extract_ufdr(path: Path) -> dict:
     """Open a .ufdr and return {contacts, chats}. chats is a list of
     {name, participants, owner_phone, chunks} — one per conversation."""
