@@ -82,6 +82,25 @@ def test_parse_chat_attributes_messages_to_named_numbered_people():
     assert owner_msg["attachments"]             # the .jpg is recorded
 
 
+def test_owner_tag_stripped_from_sender_name():
+    # Cellebrite writes the owner's own messages as "From: <phone> Name (owner)".
+    # The "(owner)" tag must not stay glued to the name, or the owner becomes a
+    # second graph node ("Name" vs "Name (owner)").
+    txt = (
+        "Participants: 972500000001@s.whatsapp.net Дима (owner), "
+        "972500000002@s.whatsapp.net Юля\n"
+        "-----------------------------\n"
+        "From: 972500000001@s.whatsapp.net Дима (owner)\n"
+        "Timestamp: 13/06/2021 20:55:00(UTC+3)\n"
+        "Body:\nпривет\n"
+        "-----------------------------\n"
+    )
+    chat = parse_chat(txt)
+    senders = {m["sender"] for m in chat["messages"]}
+    assert "Дима" in senders
+    assert not any("(owner)" in s for s in senders)
+
+
 def test_parse_contacts_uses_real_name_not_photo_filename():
     contacts = parse_contacts(REPORT_XML.encode("utf-8"))
     assert contacts.get("972522506596") == "Алекс Голованов"

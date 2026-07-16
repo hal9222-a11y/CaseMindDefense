@@ -186,6 +186,10 @@ def parse_chat(text: str) -> dict:
         elif is_owner:
             sender_phone = owner_phone
             sender_name = participants.get(owner_phone, "") or "בעל המכשיר"
+        # a From line can read "<phone> Дима (owner)" — strip the tag so the owner
+        # isn't a second graph node ("Дима" vs "Дима (owner)") the participants
+        # header already strips it, this covers the message-line path too
+        sender_name = re.sub(r"\s*\(owner\)\s*", "", sender_name).strip()
 
         attachments = re.findall(r"#\d+:\s*(\S+)", block)
 
