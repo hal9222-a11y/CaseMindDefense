@@ -72,42 +72,63 @@ def _clean_phone(raw: str) -> str:
     return digits or _digits(raw)
 
 
-def parse_contacts(report_xml: bytes) -> dict[str, str]:
+def _local(tag: str) -> str:
+    """localname of a (possibly namespaced) tag."""
+    return tag.rsplit("}", 1)[-1]
+
+
+def _contact_from_model(model) -> tuple[str, list[str]]:
+    name = ""
+    numbers: list[str] = []
+    for field in model.iter():
+        # the Contact's OWN Name comes before its Photos; a ContactPhoto also has
+        # a Name field (the .jpg filename) which must NOT clobber it — first only
+        if _local(field.tag) == "field" and field.get("name") == "Name" and not name:
+            name = "".join(field.itertext()).strip()
+        # a real phone number is a PhoneNumber model's Value field — NOT the
+        # digits inside a photo filename (972...-1413838454.jpg)
+        if _local(field.tag) == "model" and field.get("type") == "PhoneNumber":
+            for sub in field.iter():
+                if _local(sub.tag) == "field" and sub.get("name") == "Value":
+                    num = _digits("".join(sub.itertext()))
+                    if len(num) >= 6:
+                        numbers.append(num)
+    return name, numbers
+
+
+# a real phone report's report.xml runs to 1.8 GB (hundreds of thousands of
+# Party/InstantMessage models). ET.fromstring loads the whole tree into memory
+# and dies; iterparse STREAMS it, and we clear each finished model so memory
+# stays flat. Contact/PhoneNumber subtrees are kept until the Contact ends (its
+# numbers are nested children), everything else is freed on sight.
+_KEEP_UNTIL_CONTACT = {"Contact", "PhoneNumber", "ContactPhoto"}
+
+
+def parse_contacts(source) -> dict[str, str]:
     """phone(digits) -> best display name, from the report's Contact models.
-    Best-effort: a malformed report must not sink the whole import."""
+    `source` is raw bytes or a file-like stream. Best-effort: a malformed or
+    truncated report must not sink the whole import."""
+    if isinstance(source, (bytes, bytearray)):
+        import io
+
+        source = io.BytesIO(source)
+
     contacts: dict[str, str] = {}
     try:
-        root = ET.fromstring(report_xml)
+        for _event, elem in ET.iterparse(source, events=("end",)):
+            if _local(elem.tag) != "model":
+                continue
+            mtype = elem.get("type")
+            if mtype == "Contact":
+                name, numbers = _contact_from_model(elem)
+                for num in numbers:
+                    if name and not contacts.get(num):
+                        contacts[num] = name
+                elem.clear()
+            elif mtype not in _KEEP_UNTIL_CONTACT:
+                elem.clear()  # free the Party/InstantMessage/etc. bulk
     except ET.ParseError:
-        return contacts
-
-    # tag names in the report carry a namespace; match on the localname
-    def local(tag: str) -> str:
-        return tag.rsplit("}", 1)[-1]
-
-    for model in root.iter():
-        if local(model.tag) != "model" or model.get("type") != "Contact":
-            continue
-        name = ""
-        numbers: list[str] = []
-        for field in model.iter():
-            # the Contact's OWN Name comes before its Photos; a ContactPhoto also
-            # has a Name field (the .jpg filename) which must NOT clobber it, so
-            # take the first Name only
-            if (local(field.tag) == "field" and field.get("name") == "Name"
-                    and not name):
-                name = "".join(field.itertext()).strip()
-            # a real phone number is a PhoneNumber model's Value field — NOT the
-            # digits inside a photo filename (972...-1413838454.jpg)
-            if local(field.tag) == "model" and field.get("type") == "PhoneNumber":
-                for sub in field.iter():
-                    if local(sub.tag) == "field" and sub.get("name") == "Value":
-                        num = _digits("".join(sub.itertext()))
-                        if len(num) >= 6:
-                            numbers.append(num)
-        for num in numbers:
-            if name and not contacts.get(num):
-                contacts[num] = name
+        pass
     return contacts
 
 
@@ -246,7 +267,9 @@ def extract_ufdr(path: Path) -> dict:
         names = z.namelist()
         if "report.xml" in names:
             try:
-                result["contacts"] = parse_contacts(z.read("report.xml"))
+                # stream the report (it can be >1GB) instead of reading it whole
+                with z.open("report.xml") as report:
+                    result["contacts"] = parse_contacts(report)
             except Exception as exc:  # report parsing is best-effort
                 logger.warning("UFDR contact parse failed for %s: %s", path.name, exc)
 

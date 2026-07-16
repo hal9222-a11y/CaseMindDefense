@@ -89,6 +89,28 @@ def test_parse_contacts_uses_real_name_not_photo_filename():
     assert "9721359" not in contacts
 
 
+def test_parse_contacts_streams_large_reports():
+    # a real report.xml is >1GB: hundreds of thousands of Party/InstantMessage
+    # models around the Contacts. The streaming parser must free that bulk while
+    # still capturing every Contact (freeing a Contact's PhoneNumber child early
+    # would drop its number).
+    import io
+
+    bulk = "".join(
+        f'<model type="InstantMessage" id="m{i}"><field name="Body">'
+        f'<value>msg {i}</value></field></model>' for i in range(5000)
+    )
+    contact = (
+        '<model type="Contact"><field name="Name"><value><![CDATA[Дима]]></value></field>'
+        '<multiModelField name="Entries" type="PhoneNumber">'
+        '<model type="PhoneNumber"><field name="Value"><value>972501112233</value></field></model>'
+        "</multiModelField></model>"
+    )
+    xml = f'<project>{bulk}{contact}{bulk}</project>'.encode("utf-8")
+    contacts = parse_contacts(io.BytesIO(xml))
+    assert contacts.get("972501112233") == "Дима"
+
+
 def test_extract_and_index_end_to_end(tmp_path):
     from fastapi.testclient import TestClient
     from sqlmodel import Session, select
