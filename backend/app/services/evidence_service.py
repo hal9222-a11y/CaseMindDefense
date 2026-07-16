@@ -32,6 +32,10 @@ def _check_import_allowed(path: Path) -> None:
     roots = os.getenv("CASEMIND_IMPORT_ROOTS")
     if not roots:
         return
+    # our own store is always a legitimate source — the UFDR media extractor
+    # stages files there before registering them
+    if path.is_relative_to(get_settings().evidence_store_dir):
+        return
     for root in roots.split(os.pathsep):
         root = root.strip()
         if root and path.is_relative_to(Path(root).resolve()):
@@ -245,6 +249,17 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
     session.commit()
     session.refresh(evidence)
     log_event(session, "evidence_indexed", evidence_id=evidence.id, chunks=len(chunks))
+
+    # standing queries: flag key names/phones in this fresh material.
+    # best-effort — a watchlist bug must never fail the indexing itself.
+    try:
+        from app.services.watchlist_service import scan_evidence
+
+        scan_evidence(session, evidence.id)
+    except Exception:
+        logger.exception("watchlist scan failed for evidence %s", evidence.id)
+        session.rollback()
+
     return evidence
 
 
@@ -305,33 +320,58 @@ def resume_pending_indexing() -> int:
         logger.info("resume already running; the active loop will pick up new items")
         return 0
 
+    import time
+
+    from sqlalchemy.exc import OperationalError
+
     done = 0
     attempted: set[int] = set()  # never retry an id within one run — no spin on a row that can't be marked failed
+    io_failures = 0
     try:
-        with Session(get_engine()) as session:
-            while True:
-                background_control.wait_while_paused()  # user paused background work
-                query = select(Evidence.id).where(Evidence.status == "processing")
-                if attempted:
-                    query = query.where(Evidence.id.not_in(attempted))
-                # fast/high-value types first, oldest within a tier
-                evidence_id = session.exec(
-                    query.order_by(*_processing_priority()).limit(1)
-                ).first()
-                if evidence_id is None:
-                    break
-                attempted.add(evidence_id)
-                try:
-                    index_evidence(session, evidence_id)
-                    done += 1
-                except Exception:
-                    logger.exception("resume-index failed for evidence %s", evidence_id)
-                    session.rollback()
-                    ev = session.get(Evidence, evidence_id)
-                    if ev is not None:
-                        ev.status = "text_extraction_failed"
-                        session.add(ev)
-                        session.commit()
+        # The evidence DB lives on a drive that drops out intermittently; a single
+        # disk I/O error here used to kill this loop silently and the whole queue
+        # (tens of thousands of items) sat idle until the next restart. On
+        # OperationalError: reconnect and resume; give up only if the drive stays
+        # gone for 20 straight attempts (~5 minutes).
+        while True:
+            try:
+                with Session(get_engine()) as session:
+                    while True:
+                        background_control.wait_while_paused()  # user paused background work
+                        query = select(Evidence.id).where(Evidence.status == "processing")
+                        if attempted:
+                            query = query.where(Evidence.id.not_in(attempted))
+                        # fast/high-value types first, oldest within a tier
+                        evidence_id = session.exec(
+                            query.order_by(*_processing_priority()).limit(1)
+                        ).first()
+                        if evidence_id is None:
+                            break
+                        attempted.add(evidence_id)
+                        try:
+                            index_evidence(session, evidence_id)
+                            done += 1
+                            io_failures = 0
+                        except OperationalError:
+                            # a drive dropout, not a bad row — retry it after reconnect
+                            attempted.discard(evidence_id)
+                            raise
+                        except Exception:
+                            logger.exception("resume-index failed for evidence %s", evidence_id)
+                            session.rollback()
+                            ev = session.get(Evidence, evidence_id)
+                            if ev is not None:
+                                ev.status = "text_extraction_failed"
+                                session.add(ev)
+                                session.commit()
+                break  # queue drained
+            except OperationalError:
+                io_failures += 1
+                if io_failures > 20:
+                    logger.error("resume: giving up after %d consecutive disk I/O failures", io_failures)
+                    raise
+                logger.warning("resume: disk I/O error (%d), reconnecting in 15s", io_failures)
+                time.sleep(15)
     finally:
         _RESUME_LOCK.release()
     if attempted:

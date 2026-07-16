@@ -13,6 +13,12 @@ def get_engine():
     engine = create_engine(
         settings.database_url,
         connect_args={"check_same_thread": False},
+        # The DB lives on a drive that drops out for seconds at a time. A dropout
+        # permanently poisons the pooled SQLite connections ("disk I/O error" on
+        # every later call) — the pool then recycles the corpse forever and every
+        # worker dies. pre_ping tests each connection before use and replaces
+        # broken ones, so a drive hiccup costs one retry instead of the whole queue.
+        pool_pre_ping=True,
     )
 
     # This app runs many concurrent SQLite connections — request handlers, the

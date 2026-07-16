@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from app.core.security import require_api_key
 from app.core.settings import get_settings
 from app.db import init_db
-from app.api import health, evidence, search, audit, entities, timeline, contradictions, ai, cases, reports, admin, persons, status, translate, insights
+from app.api import health, evidence, search, audit, entities, timeline, contradictions, ai, cases, reports, admin, persons, status, translate, insights, watchlist, stories
 
 
 def _setup_file_logging() -> None:
@@ -59,7 +59,11 @@ async def lifespan(app: FastAPI):
     from app.services import translation_worker
 
     threading.Thread(target=lambda: embed_text("warmup", kind="query"), daemon=True).start()
-    threading.Thread(target=resume_pending_indexing, daemon=True).start()
+    # Gated like CASEMIND_BACKGROUND_TRANSLATE: the tests disable it because these
+    # daemon threads outlive their TestClient, hold _RESUME_LOCK across test
+    # boundaries, and race assertions (tests drive resume_pending_indexing() directly).
+    if os.getenv("CASEMIND_BACKGROUND_RESUME", "1") != "0":
+        threading.Thread(target=resume_pending_indexing, daemon=True).start()
     # keeps translating foreign evidence for as long as the backend runs, so the
     # material is ready before the user opens it (a chat export takes ~an hour)
     translation_worker.start()
@@ -108,3 +112,5 @@ app.include_router(persons.router, dependencies=protected)
 app.include_router(status.router, dependencies=protected)
 app.include_router(translate.router, dependencies=protected)
 app.include_router(insights.router, dependencies=protected)
+app.include_router(watchlist.router, dependencies=protected)
+app.include_router(stories.router, dependencies=protected)

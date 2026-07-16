@@ -16,6 +16,8 @@ desktop/.venv/
 *.db-wal
 *.db-shm
 *.db-journal
+# sidelined DB copies from drive migrations (e.g. casemind_defense.db.moved-to-F)
+*.db.moved-to-*
 *.sqlite-wal
 *.sqlite-shm
 
