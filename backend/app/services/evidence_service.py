@@ -3,6 +3,7 @@ import os
 import shutil
 import threading
 from pathlib import Path
+from sqlalchemy import func
 from sqlmodel import Session, select
 from app.core.settings import get_settings
 from app.models.evidence import Evidence, EvidenceChunk, ExtractedEntity
@@ -260,6 +261,33 @@ def import_file(session: Session, source_path: str, case_id: int | None = None) 
 _RESUME_LOCK = threading.Lock()
 
 
+def _processing_priority():
+    """SQL ordering that works the FAST, high-value material off the queue
+    first: text/chats/UFDR (instant) → images (OCR) → audio (minutes) → video
+    (hours). A phone case has hundreds of hours of recordings; without this the
+    queue is id-order and a lawyer waits days for the WhatsApp chats to appear
+    behind a wall of interrogation video."""
+    from sqlalchemy import case
+
+    from app.services.text_service import IMAGE_EXTENSIONS
+    from app.services.transcription_service import AUDIO_EXTENSIONS, VIDEO_EXTENSIONS
+
+    fname = func.lower(Evidence.filename)
+    tier = case(
+        (_suffix_in(fname, VIDEO_EXTENSIONS), 4),
+        (_suffix_in(fname, AUDIO_EXTENSIONS), 3),
+        (_suffix_in(fname, IMAGE_EXTENSIONS), 2),
+        else_=1,  # text, chat, xml, csv, ufdr, pdf, office docs
+    )
+    return tier, Evidence.id
+
+
+def _suffix_in(fname_col, extensions):
+    from sqlalchemy import or_
+
+    return or_(*[fname_col.like(f"%{ext}") for ext in extensions])
+
+
 def resume_pending_indexing() -> int:
     """Index every evidence in 'processing' until none remain. Covers both
     items orphaned by a crash/restart and items freshly marked by reindex-all.
@@ -286,7 +314,10 @@ def resume_pending_indexing() -> int:
                 query = select(Evidence.id).where(Evidence.status == "processing")
                 if attempted:
                     query = query.where(Evidence.id.not_in(attempted))
-                evidence_id = session.exec(query.order_by(Evidence.id).limit(1)).first()
+                # fast/high-value types first, oldest within a tier
+                evidence_id = session.exec(
+                    query.order_by(*_processing_priority()).limit(1)
+                ).first()
                 if evidence_id is None:
                     break
                 attempted.add(evidence_id)
