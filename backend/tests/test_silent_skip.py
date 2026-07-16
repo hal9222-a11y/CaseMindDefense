@@ -84,9 +84,10 @@ def test_vad_reuses_decoded_array_for_speech(tmp_path):
     calls = {}
 
     class FakeModel:
-        def transcribe(self, source, vad_filter):
+        def transcribe(self, source, vad_filter, condition_on_previous_text=True):
             calls["source_is_array"] = isinstance(source, np.ndarray)
             calls["vad_filter"] = vad_filter
+            calls["conditioning_off"] = condition_on_previous_text is False
             return iter([]), FakeInfo()
 
     with patch.object(ts, "SKIP_SILENT", True), \
@@ -96,3 +97,4 @@ def test_vad_reuses_decoded_array_for_speech(tmp_path):
         ts.transcribe_to_chunks(p)
     assert calls["source_is_array"] is True   # no second decode
     assert calls["vad_filter"] is False       # no second VAD
+    assert calls["conditioning_off"] is True  # no repetition-loop feedback

@@ -189,7 +189,17 @@ def transcribe_to_chunks(path: Path) -> list[dict] | None:
             use_vad_filter = False  # and already VAD'd — do not repeat it
 
     try:
-        segments, info = model.transcribe(source, vad_filter=use_vad_filter)
+        # condition_on_previous_text=False stops Whisper feeding its own output
+        # back as context. With it ON (the default), a low-quality / non-speech
+        # clip makes the model hallucinate a token, then loop on it forever -
+        # one 62-min file ground the GPU at 99% for 80+min producing nothing and
+        # wedged the whole queue. Off, each window is decoded independently, so a
+        # bad file finishes in bounded time.
+        # ponytail: a still-pathological file can only run long, not forever,
+        # upgrade to a subprocess+timeout wrapper if any file blows past ~10x realtime.
+        segments, info = model.transcribe(
+            source, vad_filter=use_vad_filter, condition_on_previous_text=False
+        )
     except Exception as exc:
         # this file couldn't be transcribed (e.g. a video with no audio
         # track raises IndexError inside faster-whisper). That's not a
