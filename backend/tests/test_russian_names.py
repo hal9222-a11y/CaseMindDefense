@@ -25,6 +25,24 @@ def test_extraction_keeps_names_drops_noise():
     assert not ({"Она", "Хорошо"} & names)
 
 
+def test_trim_glued_function_words_from_name():
+    # Natasha on chat text glues the next token onto a name: a contact saved
+    # "Кроха Рина" became "Кроха Рина Он/Нет/Она/Ой/Ага" - one junk person per
+    # trailing particle, which entity resolution then offered to merge as the
+    # same endearment for everyone. The name core must survive, the tail must go.
+    import pymorphy3
+
+    from app.services.russian_ner import _trim_function_words
+
+    morph = pymorphy3.MorphAnalyzer()
+    for tail in ("Он", "Нет", "Она", "Ой", "Ага"):
+        assert _trim_function_words(f"Кроха Рина {tail}", morph) == "Кроха Рина"
+    # a real two-part name is untouched
+    assert _trim_function_words("Алекс Голованов", morph) == "Алекс Голованов"
+    # a span that is only function words collapses to nothing (entity dropped)
+    assert len(_trim_function_words("Она Нет", morph)) < 2
+
+
 def test_hebrew_names_endpoint(monkeypatch):
     monkeypatch.setattr(llm_service, "ollama_available", lambda: True)
     monkeypatch.setattr(llm_service, "active_model", lambda: "aya-expanse:8b")

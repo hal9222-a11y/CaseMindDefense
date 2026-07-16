@@ -13,6 +13,37 @@ MIN_CYRILLIC_CHARS = 20  # not worth loading a Russian model for a stray word
 # calls a person still has to look like one.
 NAME_TAGS = {"Name", "Surn", "Patr"}
 
+# A person span must not begin or end with a function word. Natasha, on chat
+# text, glues the next token onto a name: a contact saved "Кроха Рина" turned
+# into "Кроха Рина Он", "...Нет", "...Она", "...Ой", "...Ага" — hundreds of junk
+# people, one per trailing pronoun/particle/interjection, that entity resolution
+# then kept offering to merge as "the same endearment for everyone". These POS
+# tags are never part of a name, so trim them off both ends.
+_FUNCTION_POS = {"NPRO", "PRCL", "INTJ", "CONJ", "PREP", "PRED", "ADVB"}
+
+
+def _is_function_word(word: str, morph) -> bool:
+    parses = morph.parse(word)
+    if not parses:
+        return False
+    # a token that CAN be a name (Аня, Ага-as-name is not) is kept; only trim
+    # when the word is a function word and is NOT a plausible personal name
+    if any(NAME_TAGS & set(p.tag.grammemes) for p in parses):
+        return False
+    pos = parses[0].tag.POS
+    return pos in _FUNCTION_POS
+
+
+def _trim_function_words(name: str, morph) -> str:
+    """Drop leading/trailing pronouns, particles, interjections etc. so
+    'Кроха Рина Нет' -> 'Кроха Рина'. Empty if nothing name-like remains."""
+    words = name.split()
+    while words and _is_function_word(words[-1], morph):
+        words.pop()
+    while words and _is_function_word(words[0], morph):
+        words.pop(0)
+    return " ".join(words)
+
 
 @lru_cache(maxsize=1)
 def _load():
@@ -89,6 +120,9 @@ def extract_russian_entities(text: str) -> list[dict] | None:
         if len(text_value) < 2:
             continue
         if label == "person":
+            text_value = _trim_function_words(text_value, model["morph"])
+            if len(text_value) < 2:
+                continue  # the span was only pronouns/particles
             text_value = normalize_name(text_value, model["morph"])
         entities.append({"text": text_value, "label": label})
     return entities
