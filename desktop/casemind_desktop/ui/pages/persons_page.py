@@ -468,10 +468,15 @@ class PersonsPage(QWidget):
 
     def _on_alias_suggestions(self, suggestions: list[dict[str, Any]]) -> None:
         self.suggest_alias_button.setEnabled(True)
+        # when a person is selected, only their nicknames — the user asked for
+        # nicknames of the highlighted person, not the whole case
+        if self._selected:
+            suggestions = [s for s in suggestions if s["person_id"] == self._selected["id"]]
         if not suggestions:
+            who = f" עבור '{self._selected['name']}'" if self._selected else ""
             QMessageBox.information(
                 self, "אין הצעות",
-                "לא נמצאו כינויים או שמות נוספים המתאימים לאנשים שבתיק.",
+                f"לא נמצאו כינויים או שמות נוספים{who}.",
             )
             return
         accepted = 0

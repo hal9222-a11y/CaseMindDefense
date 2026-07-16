@@ -36,7 +36,11 @@ def answer_with_evidence(
 
     llm_answer = None
     if llm_service.ollama_available():
-        llm_answer = llm_service.synthesize_answer(question, citations)
+        from app.services.case_analysis_service import role_context
+
+        llm_answer = llm_service.synthesize_answer(
+            question, citations, role=role_context(session, case_id)
+        )
 
     if llm_answer is None:
         return {

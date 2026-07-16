@@ -29,6 +29,16 @@ def questions(case_id: int = Query(...), session: Session = Depends(get_session)
     return suggest_questions(session, case_id)
 
 
+@router.get("/weaknesses")
+def weaknesses(case_id: int = Query(...), session: Session = Depends(get_session)):
+    """Defense-lens case weaknesses: contradictions, evidentiary gaps,
+    reliability problems, alternative readings — grounded in a sample and
+    framed by the user's declared role (PATCH /cases/{id})."""
+    from app.services.case_analysis_service import find_weaknesses
+
+    return find_weaknesses(session, case_id)
+
+
 @router.get("/flags")
 def flags(case_id: int = Query(...), session: Session = Depends(get_session)):
     """Passages matching sensitive categories (money/drugs/weapons/threats),

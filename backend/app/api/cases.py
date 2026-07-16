@@ -14,6 +14,10 @@ class CreateCaseRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
 
+class UpdateCaseRequest(BaseModel):
+    role_context: str | None = Field(default=None, max_length=500)
+
+
 @router.get("")
 def list_cases(
     limit: int = Query(100, ge=1, le=1000),
@@ -37,6 +41,21 @@ def create_case(req: CreateCaseRequest, session: Session = Depends(get_session))
     payload = {"id": case.id, "name": case.name, "created_at": case.created_at.isoformat()}
     log_event(session, "case_created", case_id=case.id, name=name)
     return payload
+
+
+@router.patch("/{case_id}")
+def update_case(case_id: int, req: UpdateCaseRequest, session: Session = Depends(get_session)):
+    """Set the user's role in the case ("סנגור של אמיר גורי") — every AI
+    prompt for the case is framed from this perspective."""
+    case = session.get(Case, case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="case not found")
+    if req.role_context is not None:
+        case.role_context = req.role_context.strip()
+        session.add(case)
+        session.commit()
+        log_event(session, "case_role_set", case_id=case_id, role=case.role_context)
+    return {"id": case.id, "name": case.name, "role_context": case.role_context}
 
 
 @router.delete("/{case_id}")

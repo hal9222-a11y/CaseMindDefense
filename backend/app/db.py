@@ -61,18 +61,22 @@ _MIGRATIONS = {
         "prev_hash": "TEXT NOT NULL DEFAULT ''",
         "event_hash": "TEXT NOT NULL DEFAULT ''",
     },
+    "case": {
+        "role_context": "TEXT NOT NULL DEFAULT ''",
+    },
 }
 
 
 def _migrate_columns(engine) -> None:
     with engine.connect() as conn:
         for table, new_columns in _MIGRATIONS.items():
-            existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+            # quoted: "case" is a reserved SQL keyword
+            existing = {row[1] for row in conn.exec_driver_sql(f'PRAGMA table_info("{table}")')}
             if not existing:
                 continue  # table not created yet; create_all will build it complete
             for name, ddl in new_columns.items():
                 if name not in existing:
-                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+                    conn.exec_driver_sql(f'ALTER TABLE "{table}" ADD COLUMN {name} {ddl}')
         conn.commit()
 
 

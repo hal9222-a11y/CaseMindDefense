@@ -11,7 +11,7 @@ import logging
 
 from sqlmodel import Session, select
 
-from app.models.evidence import Evidence, EvidenceChunk, ExtractedEntity
+from app.models.evidence import Case, Evidence, EvidenceChunk, ExtractedEntity
 from app.services import llm_service
 
 logger = logging.getLogger(__name__)
@@ -93,34 +93,61 @@ _QUESTIONS_SYSTEM = (
     "המדגם בלבד. אל תסביר, רק השאלות."
 )
 
+_WEAKNESSES_SYSTEM = (
+    "אתה יועץ אסטרטגי לסנגוריה פלילית. לפניך מדגם מייצג מחומרי תיק. "
+    "נתח את חולשות התיק מנקודת מבט ההגנה, בעברית, אך ורק לפי המדגם — אל תמציא:\n"
+    "• סתירות בין גרסאות או בין ראיות\n"
+    "• פערים ראייתיים — מה חסר כדי לבסס את טענות התביעה\n"
+    "• בעיות מהימנות: תרגום, זיהוי דוברים, הקשר חסר, שרשרת מסירה\n"
+    "• פרשנויות חלופיות וקווי הגנה שכדאי לבדוק\n"
+    "לכל נקודה ציין על אילו קטעים מהמדגם היא נסמכת. "
+    "אם המדגם דל מכדי לנתח — אמור זאת."
+)
 
-def case_overview(session: Session, case_id: int) -> dict:
+
+def role_context(session: Session, case_id: int | None) -> str:
+    """The user's declared role in the case ('' when unset)."""
+    if not case_id:
+        return ""
+    case = session.get(Case, case_id)
+    return (case.role_context or "").strip() if case else ""
+
+
+def _analyze(session: Session, case_id: int, system: str, key: str) -> dict:
+    """Shared sample->LLM flow for all case-level analyses, with the user's
+    role (when set) folded into the system prompt."""
     text = _sample_text(session, case_id)
     if not text:
-        return {"overview": None, "model": None, "reason": "no_text"}
+        return {key: None, "model": None, "reason": "no_text"}
     if not llm_service.ollama_available():
-        return {"overview": None, "model": None, "reason": "no_llm"}
+        return {key: None, "model": None, "reason": "no_llm"}
+    role = role_context(session, case_id)
+    if role:
+        system += f"\nתפקיד המשתמש בתיק: {role}. מקד את הניתוח בשירות התפקיד הזה."
     out = llm_service._chat([
-        {"role": "system", "content": _OVERVIEW_SYSTEM},
+        {"role": "system", "content": system},
         {"role": "user", "content": text},
     ])
     return {
-        "overview": out or None,
+        key: out or None,
         "model": llm_service.active_model(),
         "reason": None if out else "llm_failed",
     }
 
 
+def case_overview(session: Session, case_id: int) -> dict:
+    return _analyze(session, case_id, _OVERVIEW_SYSTEM, "overview")
+
+
+def find_weaknesses(session: Session, case_id: int) -> dict:
+    """Defense-lens analysis: contradictions, evidentiary gaps, reliability
+    problems and alternative readings — grounded in the sample only."""
+    return _analyze(session, case_id, _WEAKNESSES_SYSTEM, "weaknesses")
+
+
 def suggest_questions(session: Session, case_id: int) -> dict:
-    text = _sample_text(session, case_id)
-    if not text:
-        return {"questions": [], "model": None, "reason": "no_text"}
-    if not llm_service.ollama_available():
-        return {"questions": [], "model": None, "reason": "no_llm"}
-    out = llm_service._chat([
-        {"role": "system", "content": _QUESTIONS_SYSTEM},
-        {"role": "user", "content": text},
-    ])
+    result = _analyze(session, case_id, _QUESTIONS_SYSTEM, "raw")
+    out = result.pop("raw")
     questions = []
     for line in (out or "").splitlines():
         line = line.strip().lstrip("–-•*0123456789. ").strip()
@@ -128,6 +155,6 @@ def suggest_questions(session: Session, case_id: int) -> dict:
             questions.append(line)
     return {
         "questions": questions,
-        "model": llm_service.active_model(),
-        "reason": None if questions else "llm_failed",
+        "model": result["model"],
+        "reason": result["reason"] or (None if questions else "llm_failed"),
     }

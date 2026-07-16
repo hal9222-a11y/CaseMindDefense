@@ -258,8 +258,10 @@ def complete(prompt: str) -> str | None:
     return _chat([{"role": "user", "content": prompt}])
 
 
-def synthesize_answer(question: str, citations: list[dict]) -> str | None:
-    """Ask the local LLM to answer from the cited excerpts.
+def synthesize_answer(question: str, citations: list[dict], role: str = "") -> str | None:
+    """Ask the local LLM to answer from the cited excerpts. `role` is the
+    user's declared role in the case ("סנגור של X") — the answer is framed
+    from that perspective but stays grounded in the citations.
 
     Returns the answer text, or None when the LLM is unavailable/fails —
     callers must fall back to citation-only mode. Raises nothing."""
@@ -277,8 +279,14 @@ def synthesize_answer(question: str, citations: list[dict]) -> str | None:
             "End every sentence with its source marker, e.g. [1]."
         )
 
+    system = SYSTEM_PROMPT
+    if role:
+        system += (
+            f"\nתפקיד המשתמש בתיק: {role}. "
+            "מסגר את התשובה מנקודת המבט הזו, אך הסתמך אך ורק על הראיות המצוטטות."
+        )
     content = _chat([
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {
             "role": "user",
             "content": (

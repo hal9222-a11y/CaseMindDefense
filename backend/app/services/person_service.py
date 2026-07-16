@@ -209,10 +209,14 @@ def _norm_name(name: str) -> str:
 
 def suggest_alias_links(session: Session, case_id: int) -> list[dict]:
     """Guess that a name appearing in the evidence is a nickname/variant of an
-    existing person, so the user can merge them under one person. High
-    precision: the candidate must be a name-token of the person's full name
-    (e.g. 'דוד' for 'דוד לוי') or a short prefix nickname (דוד -> דודי).
+    existing person, so the user can merge them under one person. A name-token
+    of the full name ('דוד' for 'דוד לוי') is strongest; everything else goes
+    through the shared same-person matcher (Russian diminutives, cross-script
+    transliteration, fuzzy). The naive prefix rule this replaces surfaced only
+    emoji variants and Russian declensions on a real case, and no diminutives.
     On-demand; accept by adding an alias link."""
+    from app.services.resolution_service import _VALID_NAME_RE, _same_person_score
+
     persons = session.exec(select(Person).where(Person.case_id == case_id)).all()
     if not persons:
         return []
@@ -228,25 +232,32 @@ def suggest_alias_links(session: Session, case_id: int) -> list[dict]:
     ).all():
         claimed.add(_norm_name(ln.value))
 
-    # candidate names from the case's extracted entities
+    # candidate names from the case's extracted entities, noise filtered —
+    # emoji-decorated contact names and OCR junk are not nicknames
     from app.models.evidence import ExtractedEntity
 
-    candidates = {
-        _norm_name(text)
-        for (text, label) in session.exec(
-            select(ExtractedEntity.text, ExtractedEntity.label).where(
-                ExtractedEntity.evidence_id.in_(
-                    select(Evidence.id).where(Evidence.case_id == case_id)
-                )
+    candidates: set[str] = set()
+    for text, label in session.exec(
+        select(ExtractedEntity.text, ExtractedEntity.label).where(
+            ExtractedEntity.evidence_id.in_(
+                select(Evidence.id).where(Evidence.case_id == case_id)
             )
-        ).all()
-        if label in NAME_LABELS and len(_norm_name(text)) >= 2
-    }
+        )
+    ).all():
+        name = _norm_name(text or "")
+        if (
+            label in NAME_LABELS
+            and len(name) >= 2
+            and _VALID_NAME_RE.match(name)
+            and not is_noise_name(name)
+        ):
+            candidates.add(name)
 
     results: list[dict] = []
     for person in persons:
         pname = _norm_name(person.name)
-        tokens = set(pname.split())
+        # a 2-char token ('בן') matches far too much to declare 90% identity
+        tokens = [t for t in pname.split() if len(t) >= 3]
         for cand in candidates:
             # skip names that are already someone's name or alias (in this
             # case) — a candidate that IS another person is not an alias
@@ -257,10 +268,12 @@ def suggest_alias_links(session: Session, case_id: int) -> list[dict]:
             if cand in tokens:  # 'דוד' is a token of 'דוד לוי'
                 confidence, reason = 0.9, "חלק מהשם המלא"
             else:
-                for tok in tokens:
-                    # short prefix nickname: דוד -> דודי (1-2 extra chars)
-                    if len(cand) > len(tok) >= 3 and cand.startswith(tok) and len(cand) - len(tok) <= 2:
-                        confidence, reason = 0.6, "כינוי אפשרי"
+                # diminutives (Риночка -> Рина), cross-script (רינה -> Рина)
+                # and near-transliterations, against the full name and each token
+                for target in (pname, *tokens):
+                    scored = _same_person_score(target, cand)
+                    if scored:
+                        confidence, reason = scored
                         break
             if confidence:
                 results.append({

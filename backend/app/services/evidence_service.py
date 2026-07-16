@@ -320,9 +320,16 @@ def resume_pending_indexing() -> int:
         logger.info("resume already running; the active loop will pick up new items")
         return 0
 
+    import errno
+    import shutil
     import time
 
     from sqlalchemy.exc import OperationalError
+
+    from app.core.settings import get_settings
+
+    _DISK_MIN_FREE = 2**30  # 1 GB: below this the drive is "full" — pause, don't thrash
+    store_dir = get_settings().evidence_store_dir  # same volume as the DB
 
     done = 0
     attempted: set[int] = set()  # never retry an id within one run — no spin on a row that can't be marked failed
@@ -356,7 +363,13 @@ def resume_pending_indexing() -> int:
                             # a drive dropout, not a bad row — retry it after reconnect
                             attempted.discard(evidence_id)
                             raise
-                        except Exception:
+                        except Exception as exc:
+                            # A full disk is not a bad file: don't mark it failed
+                            # (the row would need reprocessing once space frees).
+                            # Bubble it up so the outer handler pauses.
+                            if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
+                                attempted.discard(evidence_id)
+                                raise
                             logger.exception("resume-index failed for evidence %s", evidence_id)
                             session.rollback()
                             ev = session.get(Evidence, evidence_id)
@@ -365,7 +378,31 @@ def resume_pending_indexing() -> int:
                                 session.add(ev)
                                 session.commit()
                 break  # queue drained
-            except OperationalError:
+            except (OperationalError, OSError) as exc:
+                if isinstance(exc, OSError) and exc.errno != errno.ENOSPC:
+                    raise  # an unrelated OS error — don't swallow it
+                # Disk problem. A full drive still answers disk_usage; a vanished
+                # one raises. Full → retrying can't help until the user frees
+                # space, so pause here (thread stays alive, no watchdog restart-
+                # thrash) and auto-resume when space returns. Dropout → the
+                # existing reconnect-and-eventually-give-up path.
+                try:
+                    free = shutil.disk_usage(store_dir).free
+                except OSError:
+                    free = None
+                if free is not None and free < _DISK_MIN_FREE:
+                    logger.error("resume: disk full (%.1f GB free); pausing until space is freed",
+                                 free / 2**30)
+                    while True:
+                        time.sleep(30)
+                        try:
+                            if shutil.disk_usage(store_dir).free >= _DISK_MIN_FREE:
+                                break
+                        except OSError:
+                            break  # drive vanished entirely — fall to reconnect path
+                    io_failures = 0
+                    logger.info("resume: disk space recovered; resuming indexing")
+                    continue
                 io_failures += 1
                 if io_failures > 20:
                     logger.error("resume: giving up after %d consecutive disk I/O failures", io_failures)

@@ -5,6 +5,7 @@ from typing import Any
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -39,6 +40,15 @@ class InsightsPage(QWidget):
         title = QLabel("AI Insights — תובנות")
         title.setStyleSheet("font-size: 18px; font-weight: bold;")
 
+        self.role_button = QPushButton("🎭 התפקיד שלי")
+        self.role_button.setToolTip(
+            "הגדר את תפקידך בתיק (למשל: סנגור של אמיר גורי) — כל ניתוחי ה-AI "
+            "והתשובות בתיק ימוסגרו מנקודת המבט הזו"
+        )
+        self.weaknesses_button = QPushButton("🛡️ חולשות בתיק")
+        self.weaknesses_button.setToolTip(
+            "ניתוח הגנה: סתירות, פערים ראייתיים, בעיות מהימנות וקווי הגנה"
+        )
         self.summary_button = QPushButton("📋 סקירת תיק")
         self.questions_button = QPushButton("❓ שאלות מוצעות")
         self.flags_button = QPushButton("🚩 סימון תוכן רגיש")
@@ -46,6 +56,8 @@ class InsightsPage(QWidget):
         self.digest_button = QPushButton("🎧 תקציר הקלטות")
         self.dupes_button = QPushButton("♊ כפילויות")
         self.dupes_button.setToolTip("אותו תוכן שיובא בכמה פורמטים (PDF+TXT) — מכפיל ספירות")
+        self.role_button.clicked.connect(self._set_role)
+        self.weaknesses_button.clicked.connect(self._weaknesses)
         self.summary_button.clicked.connect(self._case_summary)
         self.questions_button.clicked.connect(self._questions)
         self.flags_button.clicked.connect(self._flags)
@@ -56,7 +68,8 @@ class InsightsPage(QWidget):
         top = QHBoxLayout()
         top.addWidget(title)
         top.addStretch()
-        for b in (self.summary_button, self.questions_button, self.flags_button,
+        for b in (self.role_button, self.weaknesses_button, self.summary_button,
+                  self.questions_button, self.flags_button,
                   self.events_button, self.digest_button, self.dupes_button):
             top.addWidget(b)
 
@@ -96,6 +109,45 @@ class InsightsPage(QWidget):
     def _busy(self, button: QPushButton, label: str) -> None:
         button.setEnabled(False)
         button.setText(label)
+
+    # --- role + defense analysis ---
+    def _set_role(self) -> None:
+        if not self._guard():
+            return
+        current = ""
+        try:
+            current = self.api.get_case(self.api.current_case_id).get("role_context", "")
+        except Exception:  # noqa: BLE001 — empty prefill is fine, the save will surface errors
+            pass
+        role, ok = QInputDialog.getText(
+            self, "התפקיד שלי בתיק",
+            "לדוגמה: סנגור של אמיר גורי. ה-AI ימסגר ניתוחים ותשובות מנקודת מבט זו.\n"
+            "השאר ריק כדי לנקות.",
+            text=current,
+        )
+        if not ok:
+            return
+        try:
+            self.api.set_case_role(self.api.current_case_id, role.strip())
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "שמירת תפקיד", str(exc))
+            return
+        QMessageBox.information(
+            self, "נשמר",
+            f"התפקיד נשמר: {role.strip()}" if role.strip() else "התפקיד נוקה.",
+        )
+
+    def _weaknesses(self) -> None:
+        if not self._guard():
+            return
+        self._busy(self.weaknesses_button, "🛡️ מנתח…")
+        run_async(self.api.insight_weaknesses, self.api.current_case_id,
+                  on_done=self._on_weaknesses, on_error=self._prose_error)
+
+    def _on_weaknesses(self, result: dict[str, Any]) -> None:
+        self.weaknesses_button.setEnabled(True)
+        self.weaknesses_button.setText("🛡️ חולשות בתיק")
+        self._show_prose(result.get("weaknesses"), result.get("reason"), result.get("model"))
 
     # --- prose insights ---
     def _case_summary(self) -> None:
@@ -254,6 +306,7 @@ class InsightsPage(QWidget):
     def _prose_error(self, message: str) -> None:
         for b, t in ((self.summary_button, "📋 סקירת תיק"),
                      (self.questions_button, "❓ שאלות מוצעות"),
+                     (self.weaknesses_button, "🛡️ חולשות בתיק"),
                      (self.digest_button, "🎧 תקציר הקלטות")):
             b.setEnabled(True)
             b.setText(t)

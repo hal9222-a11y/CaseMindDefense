@@ -12,6 +12,9 @@ class Case(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str = Field(index=True)
     created_at: datetime = Field(default_factory=utcnow)
+    # the user's role in this case ("סנגור של X") — injected into AI prompts so
+    # answers and analyses are framed from that perspective
+    role_context: str = Field(default="")
 
 
 class Evidence(SQLModel, table=True):

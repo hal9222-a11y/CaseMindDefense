@@ -95,7 +95,7 @@ def test_ask_uses_llm_answer_when_available(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_service, "ollama_available", lambda: True)
     monkeypatch.setattr(
         llm_service, "synthesize_answer",
-        lambda question, citations: "The witness saw a white vehicle [1].",
+        lambda question, citations, role=None: "The witness saw a white vehicle [1].",
     )
     with TestClient(app) as client:
         marker = uuid.uuid4().hex
@@ -109,7 +109,7 @@ def test_ask_uses_llm_answer_when_available(tmp_path, monkeypatch):
 
 def test_llm_not_found_keeps_citations_visible(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_service, "ollama_available", lambda: True)
-    monkeypatch.setattr(llm_service, "synthesize_answer", lambda q, c: "NOT_FOUND")
+    monkeypatch.setattr(llm_service, "synthesize_answer", lambda q, c, role=None: "NOT_FOUND")
     with TestClient(app) as client:
         marker = uuid.uuid4().hex
         _import_marked_doc(client, tmp_path, marker)
@@ -121,7 +121,7 @@ def test_llm_not_found_keeps_citations_visible(tmp_path, monkeypatch):
 
 def test_llm_failure_degrades_gracefully(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_service, "ollama_available", lambda: True)
-    monkeypatch.setattr(llm_service, "synthesize_answer", lambda q, c: None)
+    monkeypatch.setattr(llm_service, "synthesize_answer", lambda q, c, role=None: None)
     with TestClient(app) as client:
         marker = uuid.uuid4().hex
         _import_marked_doc(client, tmp_path, marker)

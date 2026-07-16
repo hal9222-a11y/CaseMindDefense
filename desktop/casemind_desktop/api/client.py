@@ -331,6 +331,28 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def insight_weaknesses(self, case_id: int) -> dict[str, Any]:
+        response = self._session.get(
+            self._url("/insights/weaknesses"), params={"case_id": case_id}, timeout=600
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def get_case(self, case_id: int) -> dict[str, Any]:
+        response = self._session.get(self._url("/cases"), timeout=30)
+        response.raise_for_status()
+        for case in response.json():
+            if case.get("id") == case_id:
+                return case
+        return {}
+
+    def set_case_role(self, case_id: int, role_context: str) -> dict[str, Any]:
+        response = self._session.patch(
+            self._url(f"/cases/{case_id}"), json={"role_context": role_context}, timeout=30
+        )
+        response.raise_for_status()
+        return response.json()
+
     def insight_flags(self, case_id: int) -> dict[str, Any]:
         response = self._session.get(
             self._url("/insights/flags"), params={"case_id": case_id}, timeout=120

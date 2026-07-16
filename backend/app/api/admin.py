@@ -193,6 +193,25 @@ def create_backup(session: Session = Depends(get_session)):
     db_file = Path(db_url.replace("sqlite:///", "", 1))
     db_snapshot = backups_dir / f"db_snapshot_{stamp}.sqlite"
 
+    # A backup must never fill the drive it protects. Audio/video/images barely
+    # compress, so the raw byte sum (evidence + the DB, counted twice for the
+    # snapshot and its copy inside the zip) is a safe upper bound on what we're
+    # about to write. Refuse up front rather than fail mid-zip and leave a giant
+    # half-written file eating the last free bytes.
+    import shutil
+
+    evidence_files = [f for f in store_dir.rglob("*") if f.is_file()] if store_dir.exists() else []
+    needed = db_file.stat().st_size * 2 + sum(f.stat().st_size for f in evidence_files)
+    free = shutil.disk_usage(backups_dir).free
+    if free < needed * 1.05:
+        raise HTTPException(
+            status_code=507,
+            detail=(
+                f"אין מספיק מקום פנוי לגיבוי: דרושים ~{needed // 2**30 + 1} GB, "
+                f"פנויים {free // 2**30} GB. פנה מקום או גבה לכונן אחר."
+            ),
+        )
+
     src = sqlite3.connect(str(db_file))
     dst = sqlite3.connect(str(db_snapshot))
     try:
@@ -205,11 +224,12 @@ def create_backup(session: Session = Depends(get_session)):
     try:
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.write(db_snapshot, "casemind_defense.db")
-            if store_dir.exists():
-                for f in sorted(store_dir.rglob("*")):
-                    if f.is_file():
-                        zf.write(f, Path("evidence_store") / f.relative_to(store_dir))
-                        files += 1
+            for f in evidence_files:
+                zf.write(f, Path("evidence_store") / f.relative_to(store_dir))
+                files += 1
+    except BaseException:
+        zip_path.unlink(missing_ok=True)  # no giant half-written zip left behind
+        raise
     finally:
         db_snapshot.unlink(missing_ok=True)  # no stray snapshot when zipping fails
 
