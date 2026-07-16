@@ -51,6 +51,7 @@ class MainWindow(QMainWindow):
                 "Entities",
                 "Persons",
                 "Contradictions",
+                "Claim Contradictions",
                 "Entity Graph",
                 "AI Insights",
                 "Settings",
@@ -95,6 +96,22 @@ class MainWindow(QMainWindow):
             note="LLM-judged similar pairs — double-click opens evidence A",
         )
 
+        self.claim_contradictions_page = DataPage(
+            "Claim Contradictions",
+            [
+                ("Claim A", "claim_a"),
+                ("Claim B", "claim_b"),
+                ("Type", "type"),
+                ("Severity", "severity"),
+                ("Verified", "verified"),
+                ("Source A", "source_a"),
+                ("Source B", "source_b"),
+                ("Explanation", "explanation"),
+            ],
+            self.api.claim_contradictions,
+            note="Atomic-claim contradictions across statements — double-click opens evidence A",
+        )
+
         self.graph_page = GraphPage(self.api)
         self.persons_page = PersonsPage(self.api)
         self.insights_page = InsightsPage(self.api)
@@ -104,6 +121,7 @@ class MainWindow(QMainWindow):
         self.ai_page.citations.result_selected.connect(self._open_citation)
         self.timeline_page.table.row_activated.connect(self._open_citation)
         self.contradictions_page.table.row_activated.connect(self._open_citation)
+        self.claim_contradictions_page.table.row_activated.connect(self._open_citation)
         self.entities_page.table.row_activated.connect(self._search_entity)
         self.graph_page.entity_activated.connect(
             lambda entity: self._search_entity({"entity": entity})
@@ -121,6 +139,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.entities_page)
         self.pages.addWidget(self.persons_page)
         self.pages.addWidget(self.contradictions_page)
+        self.pages.addWidget(self.claim_contradictions_page)
         self.pages.addWidget(self.graph_page)
         self.pages.addWidget(self.insights_page)
         self.pages.addWidget(SettingsPage(self.api))
@@ -144,7 +163,8 @@ class MainWindow(QMainWindow):
 
     def _on_scope_changed(self, _case_id: object) -> None:
         for page in (self.timeline_page, self.entities_page, self.persons_page,
-                     self.contradictions_page, self.graph_page, self.insights_page):
+                     self.contradictions_page, self.claim_contradictions_page,
+                     self.graph_page, self.insights_page):
             page.reset()
         # search/AI are user-triggered and will use the new scope on next run
 

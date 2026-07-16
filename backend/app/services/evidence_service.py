@@ -328,8 +328,24 @@ def resume_pending_indexing() -> int:
 
     from app.core.settings import get_settings
 
-    _DISK_MIN_FREE = 2**30  # 1 GB: below this the drive is "full" — pause, don't thrash
-    store_dir = get_settings().evidence_store_dir  # same volume as the DB
+    _DISK_MIN_FREE = 2**30  # 1 GB: below this a drive is "full" — pause, don't thrash
+    # The DB and the evidence store can sit on DIFFERENT drives (e.g. DB on F:,
+    # media on D:). A SQLite "disk I/O error" means the DB drive is full; an
+    # ENOSPC on a WAV/extract write means the store drive is full. Watch BOTH.
+    _settings = get_settings()
+    _store_dir = _settings.evidence_store_dir
+    _db_dir = Path(_settings.database_url.replace("sqlite:///", "", 1)).parent
+
+    def _min_free_bytes() -> int | None:
+        """Least free space across the store and DB drives; None if neither
+        can be stat'd (both drives gone — a dropout, not a full disk)."""
+        frees = []
+        for path in (_store_dir, _db_dir):
+            try:
+                frees.append(shutil.disk_usage(path).free)
+            except OSError:
+                pass
+        return min(frees) if frees else None
 
     done = 0
     attempted: set[int] = set()  # never retry an id within one run — no spin on a row that can't be marked failed
@@ -386,20 +402,15 @@ def resume_pending_indexing() -> int:
                 # space, so pause here (thread stays alive, no watchdog restart-
                 # thrash) and auto-resume when space returns. Dropout → the
                 # existing reconnect-and-eventually-give-up path.
-                try:
-                    free = shutil.disk_usage(store_dir).free
-                except OSError:
-                    free = None
+                free = _min_free_bytes()
                 if free is not None and free < _DISK_MIN_FREE:
                     logger.error("resume: disk full (%.1f GB free); pausing until space is freed",
                                  free / 2**30)
                     while True:
                         time.sleep(30)
-                        try:
-                            if shutil.disk_usage(store_dir).free >= _DISK_MIN_FREE:
-                                break
-                        except OSError:
-                            break  # drive vanished entirely — fall to reconnect path
+                        recovered = _min_free_bytes()
+                        if recovered is None or recovered >= _DISK_MIN_FREE:
+                            break  # space back, or both drives vanished (dropout path)
                     io_failures = 0
                     logger.info("resume: disk space recovered; resuming indexing")
                     continue

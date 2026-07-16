@@ -52,6 +52,26 @@ Hard rules:
 - If the evidence does not answer the question, reply exactly: NOT_FOUND
 - Be concise and factual. No speculation."""
 
+# The cross-cutting rules that govern every analysis call — the distilled core of
+# the defense-agent charter (full text: docs/defense_agent_persona_he.md). Kept
+# short on purpose: a local model has to spend its context on the evidence, not
+# on a 6000-word persona. The structured features (contradiction engine,
+# weaknesses, elements matrix…) implement the per-section procedures; this is
+# only what must hold on EVERY prompt.
+DEFENSE_PRINCIPLES = """עקרונות מחייבים לצוות הגנה פלילי (חלים על כל ניתוח):
+• נקודת מבט של הגנה — אך אל תאמץ אוטומטית את גרסת הנאשם. הצג תמיד גם ראיה מזכה וגם את הטיעון החזק ביותר של התביעה.
+• הפרד טענה מעובדה. "המתלונן טוען ש..." אינו עובדה. אל תהפוך טענה, מסקנת חוקר או השערה לעובדה מוכחת.
+• אל תמציא: לא עובדה חסרה, לא סעיף חוק, לא פסק דין, לא ציטוט. אל תשלים מילה לא ברורה בלי לסמן זאת.
+• הנחות אסורות: בעל הטלפון אינו בהכרח כותב ההודעה; בעל החשבון אינו בהכרח מבצע הפעולה; שם באנשי קשר אינו מוכיח זהות; מיקום מכשיר אינו מיקום האדם; מספר שיחות אינו מוכיח את תוכנן; יחסים כספיים אינם מוכיחים כוונה פלילית; שתיקה/מחיקה/אי-מענה אינם מוכיחים אשמה.
+• הפרד קבילות ממשקל ומאותנטיות — ראיה קבילה עשויה להיות חלשה.
+• סמן רמת ודאות לכל ממצא: גבוהה / בינונית / נמוכה / לא ניתן לקבוע מהחומר.
+• כשחסר חומר או כשלא ניתן לקבוע — אמור זאת במפורש. אל תנחש."""
+
+
+def with_principles(system: str) -> str:
+    """Prepend the defense-agent core principles to an analysis system prompt."""
+    return f"{DEFENSE_PRINCIPLES}\n\n{system}"
+
 HEBREW_RE = re.compile("[֐-׿]")
 
 
@@ -279,7 +299,7 @@ def synthesize_answer(question: str, citations: list[dict], role: str = "") -> s
             "End every sentence with its source marker, e.g. [1]."
         )
 
-    system = SYSTEM_PROMPT
+    system = with_principles(SYSTEM_PROMPT)
     if role:
         system += (
             f"\nתפקיד המשתמש בתיק: {role}. "
@@ -487,6 +507,66 @@ Reply with EXACTLY one line:
 CONTRADICTION | <one short sentence explaining the conflict>
 or
 CONSISTENT"""
+
+
+CLAIM_CONTRADICTION_PROMPT = """You analyze witness/suspect statements and other
+evidence from a criminal case, looking for CONTRADICTIONS a defense team should
+know about. Plain semantic similarity misses these — reason about meaning.
+
+Do this:
+1. Break each source into atomic factual claims (one fact each: who, what,
+   where, when, with whom).
+2. Group claims that concern the SAME person, event, and time window — including
+   a claim in one source and the record that bears on it in another (e.g. "I
+   never met him" vs. a chat log; "I arrived at 20:00" vs. a camera timestamp).
+3. For each cross-source pair that concerns the same matter, classify the
+   relation as one of: contradiction, partial (tension but not decisive),
+   support, independent, unclear.
+4. Rate severity: high (goes to a material fact), medium, or low (minor gap).
+
+Return ONLY a JSON array (no prose) of the CONTRADICTION / PARTIAL / UNCLEAR
+pairs — skip support and independent. Each object:
+{"claim_a": "...", "claim_b": "...", "source_a": <int index>,
+ "source_b": <int index>, "type": "contradiction|partial|unclear",
+ "severity": "high|medium|low", "explanation": "<short, in Hebrew>"}
+The two claims must come from DIFFERENT sources. If there are none, return []."""
+
+
+def _extract_json_array(text: str) -> list | None:
+    """Pull the first JSON array out of a model reply, tolerant of surrounding
+    prose or code fences. None when nothing parses."""
+    try:
+        start = text.index("[")
+        end = text.rindex("]")
+    except ValueError:
+        return None
+    try:
+        parsed = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, list) else None
+
+
+def analyze_claim_contradictions(sources: list[dict], role: str = "") -> list[dict] | None:
+    """One structured pass: decompose sources into atomic claims and return the
+    cross-source contradiction/partial pairs as dicts (source_a/source_b are
+    indices into `sources`). None when the LLM is unavailable/unparseable.
+
+    Verification of each pair is the caller's job (a second judge pass) — this
+    is a screening step, never a legal determination."""
+    if not sources:
+        return []
+    blocks = [f"מקור [{i}] — {s.get('filename', '')}:\n{s.get('text', '')}"
+              for i, s in enumerate(sources)]
+    base = f"{role}\n\n{CLAIM_CONTRADICTION_PROMPT}" if role else CLAIM_CONTRADICTION_PROMPT
+    system = with_principles(base)
+    content = _chat([
+        {"role": "system", "content": system},
+        {"role": "user", "content": "\n\n".join(blocks)},
+    ])
+    if content is None:
+        return None
+    return _extract_json_array(content)
 
 
 def judge_contradiction(text_a: str, text_b: str) -> dict | None:

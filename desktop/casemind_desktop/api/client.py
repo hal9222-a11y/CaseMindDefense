@@ -488,6 +488,16 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def claim_contradictions(self) -> list[dict[str, Any]]:
+        # claim decomposition + a verification pass per hit — slower still
+        response = self._session.get(
+            self._url(endpoints.CONTRADICTION_CLAIMS),
+            params=self._scoped({}),
+            timeout=300,
+        )
+        response.raise_for_status()
+        return response.json().get("contradictions", [])
+
     def verify_evidence(self) -> dict[str, Any]:
         response = self._session.post(
             self._url(endpoints.ADMIN_VERIFY), timeout=300

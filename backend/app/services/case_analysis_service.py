@@ -121,6 +121,7 @@ def _analyze(session: Session, case_id: int, system: str, key: str) -> dict:
         return {key: None, "model": None, "reason": "no_text"}
     if not llm_service.ollama_available():
         return {key: None, "model": None, "reason": "no_llm"}
+    system = llm_service.with_principles(system)
     role = role_context(session, case_id)
     if role:
         system += f"\nתפקיד המשתמש בתיק: {role}. מקד את הניתוח בשירות התפקיד הזה."
