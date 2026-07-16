@@ -95,3 +95,49 @@ class AuditEvent(SQLModel, table=True):
     # so modifying or removing any past event breaks every hash after it
     prev_hash: str = ""
     event_hash: str = ""
+
+
+class WatchlistItem(SQLModel, table=True):
+    """A standing query: a name/phone/keyword the lawyer wants flagged in every
+    piece of evidence — including material that finishes processing weeks from
+    now (36k voice notes are transcribing in the background)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    case_id: Optional[int] = Field(default=None, foreign_key="case.id", index=True)
+    term: str = Field(index=True)
+    # phone terms match digits-normalized ("0524657474" hits "052-465-7474")
+    kind: str = "text"  # text | phone
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class WatchlistHit(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    watchlist_item_id: int = Field(foreign_key="watchlistitem.id", index=True)
+    evidence_id: int = Field(foreign_key="evidence.id", index=True)
+    chunk_index: int = 0
+    snippet: str = ""              # the match in context
+    seen: bool = Field(default=False, index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class Story(SQLModel, table=True):
+    """An investigation notebook (Timesketch-style): a titled sequence of notes,
+    pinned evidence and saved searches that builds an argument — e.g. 'סתירות
+    בגרסת המתלונן' — and can later feed a report."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    case_id: int = Field(foreign_key="case.id", index=True)
+    title: str
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class StoryItem(SQLModel, table=True):
+    """One block in a story. kind:
+      note     - free text (content = the text)
+      evidence - a pinned evidence (evidence_id, content = why it matters)
+      search   - a saved query (content = the query string)"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    story_id: int = Field(foreign_key="story.id", index=True)
+    kind: str = "note"
+    content: str = ""
+    evidence_id: Optional[int] = Field(default=None, foreign_key="evidence.id")
+    position: int = 0
+    created_at: datetime = Field(default_factory=utcnow)

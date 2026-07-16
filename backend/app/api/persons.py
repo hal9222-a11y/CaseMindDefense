@@ -10,7 +10,7 @@ from app.db import get_session
 from app.models.evidence import Case, Evidence, Person, PersonLink
 from app.services import llm_service
 from app.services.audit_service import log_event
-from app.services.person_service import person_graph, suggest_alias_links, suggest_phone_links
+from app.services.person_service import merge_persons, person_graph, suggest_alias_links, suggest_phone_identities, suggest_phone_links
 
 router = APIRouter(prefix="/persons", tags=["persons"])
 
@@ -120,6 +120,27 @@ def translate_names(case_id: int = Query(...), session: Session = Depends(get_se
                   name=person.name, value=hebrew)
         added.append({"id": person.id, "name": person.name, "name_he": hebrew})
     return {"translated": added, "count": len(added)}
+
+
+@router.get("/suggest-phone-identities")
+def suggest_phone_identities_endpoint(case_id: int = Query(...), session: Session = Depends(get_session)):
+    """Different persons sharing one phone number across the case's sources —
+    the 'saved as X on one phone, Y on the other' unification."""
+    return suggest_phone_identities(session, case_id)
+
+
+class MergePersonsRequest(BaseModel):
+    case_id: int
+    canonical_id: int
+    merge_ids: list[int]
+
+
+@router.post("/merge")
+def merge_persons_endpoint(req: MergePersonsRequest, session: Session = Depends(get_session)):
+    try:
+        return merge_persons(session, req.case_id, req.canonical_id, req.merge_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.get("/graph")

@@ -271,3 +271,100 @@ def suggest_alias_links(session: Session, case_id: int) -> list[dict]:
                     "reason": reason,
                 })
     return sorted(results, key=lambda s: -s["confidence"])
+
+
+def suggest_phone_identities(session: Session, case_id: int) -> list[dict]:
+    """Groups of DIFFERENT persons that share the same normalized phone number —
+    almost always the same human saved under different names on different phones
+    (e.g. "Малой" in the Samsung's contacts, "אמיר גורי" in the iPhone's).
+    On-demand suggestions; nothing merges until the user accepts."""
+    persons = {
+        p.id: p for p in session.exec(select(Person).where(Person.case_id == case_id)).all()
+    }
+    if not persons:
+        return []
+
+    # canonical key = last 9 digits: "972545642339" (international) and
+    # "054-564-2339" (local) are the same Israeli number in different dress
+    def canonical(value: str) -> str:
+        digits = _norm_phone(value)
+        return digits[-9:] if len(digits) >= 9 else digits
+
+    by_phone: dict[str, set[int]] = {}
+    for link in session.exec(
+        select(PersonLink).where(PersonLink.person_id.in_(list(persons)), PersonLink.kind == "phone")
+    ).all():
+        norm = canonical(link.value)
+        if len(norm) >= 6:
+            by_phone.setdefault(norm, set()).add(link.person_id)
+
+    suggestions = []
+    for phone, ids in by_phone.items():
+        if len(ids) < 2:
+            continue
+        members = [persons[i] for i in sorted(ids)]
+        suggestions.append({
+            "phone": phone,
+            # a shared number is near-certain identity, but family/shared phones
+            # exist — leave the final call to the user
+            "confidence": 0.9,
+            "members": [
+                {"person_id": p.id, "name": p.name, "description": p.description}
+                for p in members
+            ],
+        })
+    return sorted(suggestions, key=lambda s: s["phone"])
+
+
+def merge_persons(session: Session, case_id: int, canonical_id: int, merge_ids: list[int]) -> dict:
+    """Fold persons into one identity: each merged person's name becomes an
+    alias of the canonical, all their links move over (deduped), relations
+    pointing at them are re-pointed, and the merged rows are deleted."""
+    from app.services.audit_service import log_event
+
+    canonical = session.get(Person, canonical_id)
+    if canonical is None or canonical.case_id != case_id:
+        raise ValueError("canonical person not found in this case")
+
+    canon_links = session.exec(select(PersonLink).where(PersonLink.person_id == canonical_id)).all()
+    seen = {(l.kind, l.value, l.related_person_id) for l in canon_links}
+    merged_names = []
+
+    for mid in merge_ids:
+        if mid == canonical_id:
+            continue
+        person = session.get(Person, mid)
+        if person is None or person.case_id != case_id:
+            raise ValueError(f"person {mid} not found in this case")
+
+        if ("alias", person.name, None) not in seen and person.name != canonical.name:
+            session.add(PersonLink(person_id=canonical_id, kind="alias", value=person.name))
+            seen.add(("alias", person.name, None))
+
+        for link in session.exec(select(PersonLink).where(PersonLink.person_id == mid)).all():
+            key = (link.kind, link.value, link.related_person_id)
+            if key in seen:
+                session.delete(link)
+                continue
+            link.person_id = canonical_id
+            session.add(link)
+            seen.add(key)
+
+        # relations OTHER persons have to the merged one must survive the merge
+        for rel in session.exec(select(PersonLink).where(PersonLink.related_person_id == mid)).all():
+            rel.related_person_id = canonical_id
+            session.add(rel)
+
+        if person.description and person.description not in (canonical.description or ""):
+            canonical.description = (canonical.description + " | " if canonical.description else "") + person.description
+
+        merged_names.append(person.name)
+        session.delete(person)
+
+    session.add(canonical)
+    session.commit()
+    log_event(
+        session, "persons_merged", case_id=case_id,
+        person_id=canonical_id, merged=merged_names,
+    )
+    return {"person_id": canonical_id, "canonical": canonical.name, "merged": merged_names}
