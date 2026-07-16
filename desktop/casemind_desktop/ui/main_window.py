@@ -27,7 +27,17 @@ class MainWindow(QMainWindow):
         self.api = ApiClient()
 
         self.setWindowTitle(f"{APP_NAME} - {APP_VERSION}")
-        self.resize(1400, 850)
+        # Fit the window to the ACTUAL screen and center it. A fixed 1400x850
+        # overflowed a 1536x816 work area (common 1080p laptop at 125% DPI) —
+        # the right edge of the RTL layout landed off-screen.
+        available = self.screen().availableGeometry()
+        width = min(1400, available.width() - 20)
+        height = min(850, available.height() - 20)
+        self.resize(width, height)
+        self.move(
+            available.x() + (available.width() - width) // 2,
+            available.y() + (available.height() - height) // 2,
+        )
 
         self.sidebar = QListWidget()
         self.sidebar.setFixedWidth(230)
