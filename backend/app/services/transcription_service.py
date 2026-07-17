@@ -37,6 +37,13 @@ SKIP_SILENT = os.getenv("CASEMIND_SKIP_SILENT", "1") != "0"
 # sticker, a 0.2s notification). Conservative — a one-word "כן" is ~0.5s.
 MIN_AUDIO_SECONDS = float(os.getenv("CASEMIND_MIN_AUDIO_SECONDS", "0.4"))
 
+# The languages actually present in the case. Free auto-detect on a short/noisy
+# voice note lands on nonsense — real logs show 'be' (Belarusian) at 0.39, 'ml'
+# (Malayalam) at 0.19 for Hebrew/Russian clips — and then transcribes gibberish
+# under the wrong language model. Restricting the choice to these keeps it on the
+# languages the case actually contains. Empty value ("") restores free detection.
+ALLOWED_LANGS = [s.strip() for s in os.getenv("CASEMIND_WHISPER_LANGS", "he,ru,ar,en").split(",") if s.strip()]
+
 
 def _probe_media(path: Path) -> tuple[bool, float]:
     """(has_audio_stream, audio_seconds) from the container HEADER only — no
@@ -160,6 +167,24 @@ def _fmt(seconds: float) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
+def _pick_language(model, audio) -> str | None:
+    """Restrict Whisper's language choice to the case's actual languages
+    (ALLOWED_LANGS). Detects over the audio, then returns the best-scoring
+    ALLOWED language so a noisy clip can't be transcribed as Belarusian/Malayalam.
+    Returns None (free auto-detect) when there is no decoded array to detect on,
+    the allow-list is disabled, or detection fails."""
+    if audio is None or not ALLOWED_LANGS:
+        return None
+    try:
+        # look at 2 windows, not just the first 30s — a clip can open with noise
+        _, _, all_probs = model.detect_language(audio, language_detection_segments=2)
+    except Exception as exc:  # detection is best-effort; fall back to auto
+        logger.warning("language detection failed, using auto-detect: %s", exc)
+        return None
+    allowed = [(lang, p) for lang, p in all_probs if lang in ALLOWED_LANGS]
+    return max(allowed, key=lambda lp: lp[1])[0] if allowed else None
+
+
 def transcribe_to_chunks(path: Path) -> list[dict] | None:
     """Transcribe audio (or a video's audio track) into chunk dicts with
     time-range citations: {'text', 'source_location': 'time:MM:SS-MM:SS'}.
@@ -179,6 +204,7 @@ def transcribe_to_chunks(path: Path) -> list[dict] | None:
     # decode + VAD once; skip files with no speech, reuse the array otherwise
     source: object = str(path)
     use_vad_filter = True
+    language: str | None = None  # None = Whisper auto-detects (no array to restrict on)
     if SKIP_SILENT:
         audio, has_speech = _decode_and_vad(path)
         if audio is not None:
@@ -187,6 +213,7 @@ def transcribe_to_chunks(path: Path) -> list[dict] | None:
                 return []
             source = audio          # transcribe the array we already decoded
             use_vad_filter = False  # and already VAD'd — do not repeat it
+            language = _pick_language(model, audio)  # keep it on the case's languages
 
     try:
         # condition_on_previous_text=False stops Whisper feeding its own output
@@ -198,7 +225,8 @@ def transcribe_to_chunks(path: Path) -> list[dict] | None:
         # ponytail: a still-pathological file can only run long, not forever,
         # upgrade to a subprocess+timeout wrapper if any file blows past ~10x realtime.
         segments, info = model.transcribe(
-            source, vad_filter=use_vad_filter, condition_on_previous_text=False
+            source, language=language, vad_filter=use_vad_filter,
+            condition_on_previous_text=False,
         )
     except Exception as exc:
         # this file couldn't be transcribed (e.g. a video with no audio

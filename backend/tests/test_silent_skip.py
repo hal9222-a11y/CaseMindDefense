@@ -84,10 +84,15 @@ def test_vad_reuses_decoded_array_for_speech(tmp_path):
     calls = {}
 
     class FakeModel:
-        def transcribe(self, source, vad_filter, condition_on_previous_text=True):
+        def detect_language(self, audio, language_detection_segments=1):
+            return "he", 0.99, [("he", 0.99)]
+
+        def transcribe(self, source, language=None, vad_filter=None,
+                       condition_on_previous_text=True):
             calls["source_is_array"] = isinstance(source, np.ndarray)
             calls["vad_filter"] = vad_filter
             calls["conditioning_off"] = condition_on_previous_text is False
+            calls["language"] = language
             return iter([]), FakeInfo()
 
     with patch.object(ts, "SKIP_SILENT", True), \
@@ -98,3 +103,4 @@ def test_vad_reuses_decoded_array_for_speech(tmp_path):
     assert calls["source_is_array"] is True   # no second decode
     assert calls["vad_filter"] is False       # no second VAD
     assert calls["conditioning_off"] is True  # no repetition-loop feedback
+    assert calls["language"] == "he"          # restricted to the case's languages
