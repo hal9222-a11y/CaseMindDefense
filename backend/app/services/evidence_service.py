@@ -11,9 +11,15 @@ from app.services.audit_service import log_event
 from app.services.chat_service import chunk_by_messages, is_chat_export
 from app.services.embedding_service import embed_text, embedding_model_name, serialize_embedding
 from app.services.hash_service import sha256_file
+from app.services import llm_service
 from app.services.ner_service import extract_entities
 from app.services.transcription_service import MEDIA_EXTENSIONS, transcribe_to_chunks
-from app.services.text_service import TextExtractionError, chunk_text_with_offsets, extract_text
+from app.services.text_service import (
+    IMAGE_EXTENSIONS,
+    TextExtractionError,
+    chunk_text_with_offsets,
+    extract_text,
+)
 
 class DuplicateEvidenceError(Exception):
     def __init__(self, existing_id: int):
@@ -181,6 +187,19 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
             extraction_method = "chat"
         else:
             chunks = chunk_text_with_offsets(text)
+
+    # A photo with NO readable text used to land in 'no_text_found' and vanish
+    # from search. When OCR finds nothing in an image, ask a vision model to
+    # describe it so it's still findable ("locate the picture of the car"). Only
+    # the text-less images pay the vision cost; an image whose OCR already gave
+    # text keeps that. Best-effort — disabled/failed captioning leaves the image
+    # exactly as OCR left it. Cross-lingual embeddings make the description
+    # findable in Hebrew even if the model answers in English.
+    if not chunks and stored.suffix.lower() in IMAGE_EXTENSIONS:
+        caption = llm_service.describe_image(stored)
+        if caption:
+            extraction_method = "caption"  # no OCR text — the description IS the content
+            chunks = [{"text": caption, "source_location": "image:description"}]
 
     # Build the whole new index in memory FIRST. Embedding and NER are the slow
     # part, and the evidence must stay searchable while they run.

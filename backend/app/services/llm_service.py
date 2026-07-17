@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -8,6 +9,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,17 @@ GEMINI_MODEL = os.getenv("CASEMIND_GEMINI_MODEL", "gemini-2.0-flash")
 # so a machine with capable models uses them without configuration. Set
 # CASEMIND_LLM_MODEL to force a specific model instead.
 FORCED_MODEL = os.getenv("CASEMIND_LLM_MODEL") or None
+
+# Image description: an Ollama VISION model (llava / moondream / qwen2.5vl …) used
+# to describe images so a photo with NO readable text is still findable in search.
+# Empty = disabled (default): the feature stays dormant until the user pulls a
+# vision model and sets this, so nothing changes on machines without one.
+VISION_MODEL = os.getenv("CASEMIND_VISION_MODEL", "") or None
+VISION_PROMPT = os.getenv(
+    "CASEMIND_VISION_PROMPT",
+    "תאר בעברית, במשפט או שניים, מה רואים בתמונה: אנשים, מקום, חפצים, טקסט, "
+    "פעולה או מסמך. אל תמציא — תאר אך ורק את מה שנראה בפועל.",
+)
 
 # names/families that aren't general-purpose chat models — never auto-select
 _EXCLUDE_RE = re.compile(r"ocr|embed|rerank|whisper|bge|vl|vision|code|guard|cloud", re.I)
@@ -58,7 +71,9 @@ Hard rules:
 # on a 6000-word persona. The structured features (contradiction engine,
 # weaknesses, elements matrix…) implement the per-section procedures; this is
 # only what must hold on EVERY prompt.
-DEFENSE_PRINCIPLES = """עקרונות מחייבים לצוות הגנה פלילי (חלים על כל ניתוח):
+DEFENSE_PRINCIPLES = """אתה משמש כצוות הגנה פלילי בישראל: סנגור מנוסה, חוקר משטרה לשעבר ומומחה לדיני הראיות וסדר הדין הפלילי הישראלי. תפקידך לאתר, לארגן ולהציף בפני הסנגור כל ממצא שעשוי לסייע להגנה — אינך מחליף את שיקול דעתו.
+
+עקרונות מחייבים לצוות הגנה פלילי (חלים על כל ניתוח):
 • נקודת מבט של הגנה — אך אל תאמץ אוטומטית את גרסת הנאשם. הצג תמיד גם ראיה מזכה וגם את הטיעון החזק ביותר של התביעה.
 • הפרד טענה מעובדה. "המתלונן טוען ש..." אינו עובדה. אל תהפוך טענה, מסקנת חוקר או השערה לעובדה מוכחת.
 • אל תמציא: לא עובדה חסרה, לא סעיף חוק, לא פסק דין, לא ציטוט. אל תשלים מילה לא ברורה בלי לסמן זאת.
@@ -276,6 +291,53 @@ def to_hebrew_name(name: str) -> str | None:
 def complete(prompt: str) -> str | None:
     """One free-form completion with the active model; None when unavailable."""
     return _chat([{"role": "user", "content": prompt}])
+
+
+_vision_ok: bool | None = None  # cache: None=unchecked, True/False once resolved
+
+
+def _vision_available() -> bool:
+    """Whether the configured vision model is actually installed in Ollama.
+    Checked once and cached so we don't warn per-image across a 14k-image dump."""
+    global _vision_ok
+    if VISION_MODEL is None:
+        return False
+    if _vision_ok is None:
+        names = {m.get("name", "") for m in _installed_models()}
+        _vision_ok = VISION_MODEL in names or any(
+            n.startswith(f"{VISION_MODEL}:") for n in names
+        )
+        if not _vision_ok:
+            logger.warning(
+                "CASEMIND_VISION_MODEL=%r is not installed in Ollama; image "
+                "description disabled. Install it with: ollama pull %s",
+                VISION_MODEL, VISION_MODEL,
+            )
+    return _vision_ok
+
+
+def describe_image(path: str | Path) -> str | None:
+    """A short description of what an image shows, so a photo with NO readable
+    text is still findable in search ("locate the picture of the car"). Uses an
+    Ollama vision model (CASEMIND_VISION_MODEL). Returns None when disabled, the
+    model isn't installed, or the call fails — captioning is best-effort and must
+    never break indexing."""
+    if not _vision_available() or LLM_PROVIDER == "gemini":
+        return None  # local vision only for now
+    try:
+        data = Path(path).read_bytes()
+    except OSError as exc:
+        logger.warning("could not read image for description: %s", exc)
+        return None
+    b64 = base64.b64encode(data).decode("ascii")
+    messages = [{"role": "user", "content": VISION_PROMPT, "images": [b64]}]
+    try:
+        out = _post_chat(VISION_MODEL, messages, num_gpu=None)
+    except Exception as exc:
+        # GPU busy / model crash / timeout — skip the description, keep indexing.
+        logger.warning("image description failed (%s): %s", VISION_MODEL, exc)
+        return None
+    return out.strip() or None
 
 
 def synthesize_answer(question: str, citations: list[dict], role: str = "") -> str | None:
