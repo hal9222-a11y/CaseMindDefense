@@ -223,7 +223,11 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
             )
         )
 
-        found = extract_entities(chunk_text)
+        # A caption is a vision model's guess, not case content. Running NER on
+        # it would inject invented "people"/places (the model hallucinates names)
+        # into the entity graph as if they were real parties. Keep the caption
+        # searchable (embedded above) but never let it create entities.
+        found = [] if extraction_method == "caption" else extract_entities(chunk_text)
 
         # The people who sent the messages in this passage. Recording them makes
         # the conversation participants first-class people, and because both

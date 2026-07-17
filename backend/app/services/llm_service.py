@@ -35,8 +35,10 @@ FORCED_MODEL = os.getenv("CASEMIND_LLM_MODEL") or None
 VISION_MODEL = os.getenv("CASEMIND_VISION_MODEL", "") or None
 VISION_PROMPT = os.getenv(
     "CASEMIND_VISION_PROMPT",
-    "תאר בעברית, במשפט או שניים, מה רואים בתמונה: אנשים, מקום, חפצים, טקסט, "
-    "פעולה או מסמך. אל תמציא — תאר אך ורק את מה שנראה בפועל.",
+    "תאר במשפט אחד קצר ועובדתי מה נראה בתמונה: עצמים, אנשים, סצנה, טקסט גלוי. "
+    "אל תנחש ואל תמציא שמות, תאריכים, מקומות, אמנים, רישיונות או פרטים שאינם "
+    "נראים בבירור. אם התמונה מטושטשת/גרפית ולא ניתן לזהות תוכן ממשי, כתוב "
+    '"תמונה ללא תוכן מזוהה". ענה בעברית בלבד.',
 )
 
 # names/families that aren't general-purpose chat models — never auto-select
@@ -316,6 +318,41 @@ def _vision_available() -> bool:
     return _vision_ok
 
 
+VISION_MAX_SIDE = int(os.getenv("CASEMIND_VISION_MAX_SIDE", "768"))
+
+
+def _downscaled_image_bytes(path: str | Path) -> bytes | None:
+    """Read an image and shrink its longest side to VISION_MAX_SIDE. A vision
+    model tokenizes by pixel dimensions, so a full-res phone photo (4000px) can
+    take minutes to caption while a 768px copy takes seconds with no loss for a
+    "what is this" description. Returns None when the file can't be read OR isn't
+    a decodable image — a corrupt/zero-size file must be skipped, not handed to
+    Ollama raw (it stalls the model for the full timeout on garbage input)."""
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        logger.warning("could not read image for description: %s", exc)
+        return None
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        with Image.open(BytesIO(raw)) as im:
+            if min(im.size) == 0:
+                return None  # zero-dimension / corrupt — skip, don't stall Ollama
+            if max(im.size) <= VISION_MAX_SIDE:
+                return raw
+            im = im.convert("RGB")
+            im.thumbnail((VISION_MAX_SIDE, VISION_MAX_SIDE))
+            buf = BytesIO()
+            im.save(buf, format="JPEG", quality=85)
+            return buf.getvalue()
+    except Exception as exc:  # not a decodable image — skip rather than stall
+        logger.debug("image not decodable, skipping description (%s): %s", path, exc)
+        return None
+
+
 def describe_image(path: str | Path) -> str | None:
     """A short description of what an image shows, so a photo with NO readable
     text is still findable in search ("locate the picture of the car"). Uses an
@@ -324,15 +361,26 @@ def describe_image(path: str | Path) -> str | None:
     never break indexing."""
     if not _vision_available() or LLM_PROVIDER == "gemini":
         return None  # local vision only for now
-    try:
-        data = Path(path).read_bytes()
-    except OSError as exc:
-        logger.warning("could not read image for description: %s", exc)
+    data = _downscaled_image_bytes(path)
+    if data is None:
         return None
     b64 = base64.b64encode(data).decode("ascii")
     messages = [{"role": "user", "content": VISION_PROMPT, "images": [b64]}]
     try:
-        out = _post_chat(VISION_MODEL, messages, num_gpu=None)
+        # ponytail: force all layers onto the GPU (num_gpu=99) with a small
+        # context. Ollama's auto-offload under-fills a 4GB card and spills the
+        # model to CPU (minutes/image, hits the timeout); full offload keeps it
+        # resident (tens of seconds/image on a weak GPU, far less on a strong
+        # one). Captioning is meant to run only when the GPU is free (the backend
+        # is down), so the model fits. If it ever runs against a busy GPU it
+        # fails fast -> None -> image left as-is, per the contract below.
+        # num_predict caps length and repeat_penalty breaks the repetition loops
+        # this small VLM otherwise falls into (a caption degenerating into the
+        # same phrase 20x, which both wastes minutes and pollutes the text).
+        out = _post_chat(
+            VISION_MODEL, messages, num_gpu=99, num_ctx=4096,
+            extra_options={"num_predict": 90, "repeat_penalty": 1.4, "temperature": 0.0},
+        )
     except Exception as exc:
         # GPU busy / model crash / timeout — skip the description, keep indexing.
         logger.warning("image description failed (%s): %s", VISION_MODEL, exc)
@@ -471,10 +519,15 @@ def _chat_call(model: str, messages: list[dict]) -> str | None:
     return _ollama_call(model, messages)
 
 
-def _post_chat(model: str, messages: list[dict], num_gpu: int | None) -> str:
+def _post_chat(model: str, messages: list[dict], num_gpu: int | None,
+               num_ctx: int | None = None, extra_options: dict | None = None) -> str:
     options: dict = {"temperature": 0.1}
     if num_gpu is not None:
         options["num_gpu"] = num_gpu  # 0 = force CPU (no GPU layers)
+    if num_ctx is not None:
+        options["num_ctx"] = num_ctx
+    if extra_options:
+        options.update(extra_options)
     payload = {"model": model, "stream": False, "messages": messages, "options": options}
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
