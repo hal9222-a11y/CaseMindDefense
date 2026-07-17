@@ -32,6 +32,18 @@ def test_pick_language_none_without_audio_or_allowlist(monkeypatch):
     assert _pick_language(_FakeModel([("he", 0.9)]), audio=object()) is None  # disabled
 
 
+def test_pick_language_malformed_return_degrades_to_none(monkeypatch):
+    # a surprise shape from detect_language must fall back to auto-detect (None),
+    # never escape and fail the file
+    monkeypatch.setattr(transcription_service, "ALLOWED_LANGS", ["he", "ru"])
+
+    class Bad:
+        def detect_language(self, audio, language_detection_segments=1):
+            return None  # not the expected (lang, prob, all_probs) triple
+
+    assert _pick_language(Bad(), audio=object()) is None
+
+
 def _fake_wav(tmp_path, marker):
     p = tmp_path / f"wiretap_{marker}.wav"
     # marker in the content too: identical bytes would dedupe by SHA256

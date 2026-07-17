@@ -176,13 +176,15 @@ def _pick_language(model, audio) -> str | None:
     if audio is None or not ALLOWED_LANGS:
         return None
     try:
-        # look at 2 windows, not just the first 30s — a clip can open with noise
+        # look at 2 windows, not just the first 30s — a clip can open with noise.
+        # Parsing is inside the guard too: a malformed return must degrade to
+        # auto-detect (None), never escape and fail the file.
         _, _, all_probs = model.detect_language(audio, language_detection_segments=2)
+        allowed = [(lang, p) for lang, p in all_probs if lang in ALLOWED_LANGS]
+        return max(allowed, key=lambda lp: lp[1])[0] if allowed else None
     except Exception as exc:  # detection is best-effort; fall back to auto
         logger.warning("language detection failed, using auto-detect: %s", exc)
         return None
-    allowed = [(lang, p) for lang, p in all_probs if lang in ALLOWED_LANGS]
-    return max(allowed, key=lambda lp: lp[1])[0] if allowed else None
 
 
 def transcribe_to_chunks(path: Path) -> list[dict] | None:
