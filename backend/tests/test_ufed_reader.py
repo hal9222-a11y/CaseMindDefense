@@ -21,6 +21,9 @@ SAMPLE = """<?xml version='1.0' encoding='utf-8'?>
   <sms_message><id>3</id><number>999</number><name>N/A</name>
     <timestamp>2016-01-29T11:49:35+02:00</timestamp><type>Incoming</type>
     <text>your verification code is 2961</text></sms_message>
+  <sms_message><id>4</id><number></number><name>Waze</name>
+    <timestamp>2016-01-29T12:41:38+02:00</timestamp><type>Incoming</type>
+    <text>Your Waze verification code is 651054</text></sms_message>
 </report></reports>
 """
 
@@ -43,6 +46,11 @@ def test_detects_and_parses_sms_and_contacts(tmp_path):
     # the counterparty rides along as a speaker (name + phone) for graph linking
     speakers = {s for ch in dima["chunks"] for s in ch["speakers"]}
     assert "Dima" in speakers and "+972528772478" in speakers
+
+    # an alphanumeric sender id (no <number>) must NOT be dropped — ~half the SMS
+    # on a real phone are service senders like this; group them under the name
+    waze = next(c for c in data["chats"] if c["name"] == "SMS_Waze")
+    assert "651054" in "\n".join(ch["text"] for ch in waze["chunks"])
 
 
 def test_not_a_reader_report(tmp_path):

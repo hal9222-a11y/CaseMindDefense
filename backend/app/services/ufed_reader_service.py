@@ -96,28 +96,33 @@ def extract_ufed_reader(path: Path) -> dict:
             elif tag in ("sms_message", "mms_message"):
                 number = _digits(_child_text(elem, "number"))
                 body = _child_text(elem, "text") or _child_text(elem, "body")
-                if number and body:
-                    name = _child_text(elem, "name")
-                    named = name and name.upper() != "N/A"
+                name = _child_text(elem, "name")
+                named = bool(name) and name.upper() != "N/A"
+                # counterparty thread key: the phone number, else an alphanumeric
+                # sender id ("Waze", "orange", "HOT"). Those carry no <number> but
+                # are ~half the SMS on a real phone (bank/2FA/service alerts) and
+                # are still evidence — grouping by number alone silently drops them.
+                key = number or (name if named else "")
+                if key and body:
                     outgoing = _child_text(elem, "type").lower() == "outgoing"
-                    threads[number].append({
+                    threads[key].append({
                         "sender": OWNER if outgoing else (name if named else number),
-                        "phone": "" if outgoing else number,
+                        "phone": number if (number and not outgoing) else "",
                         "timestamp": _child_text(elem, "timestamp"),
                         "body": body,
                         "attachments": [],
                         "is_owner": outgoing,
                     })
-                    if named and number not in thread_name:
-                        thread_name[number] = name
+                    if named and key not in thread_name:
+                        thread_name[key] = name
                 elem.clear()
     except (ParseError, DefusedXmlException, OSError) as exc:
         logger.warning("UFED Reader parse of %s ended early: %s", path.name, exc)
 
     chats: list[dict] = []
-    for number, messages in threads.items():
+    for key, messages in threads.items():
         messages.sort(key=lambda m: m["timestamp"])  # ISO timestamps sort chronologically
-        label = f"SMS_{thread_name.get(number, number)}"
+        label = f"SMS_{thread_name.get(key, key)}"
         chunks = chat_to_chunks({"messages": messages}, label)
         if chunks:
             chats.append({"name": label, "chunks": chunks})
