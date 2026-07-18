@@ -15,6 +15,7 @@ from app.services.hash_service import sha256_file
 from app.services import llm_service, search_index
 from app.services.ner_service import extract_entities
 from app.services.transcription_service import MEDIA_EXTENSIONS, transcribe_guarded
+from app.services.ufed_reader_service import is_ufed_reader_report
 from app.services.text_service import (
     IMAGE_EXTENSIONS,
     TextExtractionError,
@@ -131,6 +132,27 @@ def _ufdr_chunks(stored: Path) -> list[dict]:
     return chunks
 
 
+def _ufed_reader_chunks(stored: Path) -> list[dict]:
+    """SMS/MMS conversations + phone book from a UFED Reader Report.xml (the
+    folder-extraction format), as message chunks that flow through the same
+    entity/graph pipeline as chats. Mirrors _ufdr_chunks for the .xml reports the
+    folder-only devices ship instead of a .ufdr."""
+    from app.services.ufed_reader_service import extract_ufed_reader
+
+    data = extract_ufed_reader(stored)
+    chunks: list[dict] = []
+    for chat in data["chats"]:
+        chunks.extend(chat["chunks"])
+    if data["contacts"]:
+        directory = "\n".join(f"{name}: +{num}" for num, name in data["contacts"].items())
+        chunks.append({
+            "text": "אנשי קשר (מדריך המכשיר):\n" + directory,
+            "source_location": "contacts",
+            "speakers": list(data["contacts"].values()),
+        })
+    return chunks
+
+
 def _drop_old_index(session: Session, evidence_id: int) -> None:
     for old_chunk in session.exec(
         select(EvidenceChunk).where(EvidenceChunk.evidence_id == evidence_id)
@@ -161,6 +183,9 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
     if stored.suffix.lower() == ".ufdr":
         chunks = _ufdr_chunks(stored)
         extraction_method = "ufdr"
+    elif stored.suffix.lower() == ".xml" and is_ufed_reader_report(stored):
+        chunks = _ufed_reader_chunks(stored)
+        extraction_method = "ufed_reader"
     elif stored.suffix.lower() in MEDIA_EXTENSIONS:
         media_chunks = transcribe_guarded(stored)
         if media_chunks is None:
