@@ -151,13 +151,19 @@ def _extract_xml_text(path: Path) -> str:
     """Forensic export XML (interception manifests, call logs, contacts) keeps
     the real data in ATTRIBUTES — Target, Comment, timestamps — not in text
     nodes, so a plain itertext() would return almost nothing. Pull both."""
-    import re
-    import xml.etree.ElementTree as ET
+    from xml.etree.ElementTree import ParseError
 
+    from defusedxml.common import DefusedXmlException
+    from defusedxml.ElementTree import parse as safe_parse
+
+    # This XML comes from an untrusted phone dump. stdlib ElementTree expands
+    # internal entities, so a crafted "billion laughs" file would exhaust memory
+    # and take indexing down. defusedxml refuses entity/DTD/external-ref tricks;
+    # on that OR malformed XML, fall back to tag-stripping the raw text (regex on
+    # literal bytes never expands entities) rather than losing the file.
     try:
-        root = ET.parse(path).getroot()
-    except ET.ParseError:
-        # malformed XML: strip tags from the raw text rather than lose it
+        root = safe_parse(path).getroot()
+    except (ParseError, DefusedXmlException):
         raw = path.read_text(encoding="utf-8", errors="ignore")
         return re.sub(r"<[^>]+>", " ", raw).strip()
 

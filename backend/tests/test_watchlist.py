@@ -47,6 +47,34 @@ def test_scan_at_index_flags_new_evidence(tmp_path):
         assert client.get(f"/watchlist/hits?case_id={case['id']}&unseen_only=true").json() == []
 
 
+def test_watchlist_scan_failure_never_breaks_indexing(tmp_path, monkeypatch):
+    """A crash inside the watchlist scan must not fail — or mislabel — the
+    indexing it hangs off of. (Regression: the scan's except-handler referenced
+    an undefined `logger`, so a scan failure raised NameError, which propagated
+    out and marked already-indexed evidence as text_extraction_failed.)"""
+    from sqlmodel import Session
+
+    from app.db import get_engine
+    from app.services import evidence_service, watchlist_service
+
+    def boom(*a, **k):
+        raise RuntimeError("watchlist exploded")
+
+    monkeypatch.setattr(watchlist_service, "scan_evidence", boom)
+
+    with TestClient(app) as client:
+        case = _case(client)
+        p = tmp_path / f"doc_{uuid.uuid4().hex}.txt"
+        p.write_text("הרכב הלבן חנה ליד הבניין.", encoding="utf-8")
+        ev = client.post("/evidence/import-file",
+                         json={"path": str(p), "case_id": case["id"]}).json()
+        with Session(get_engine()) as session:
+            result = evidence_service.index_evidence(session, ev["id"])  # must not raise
+            # read status INSIDE the session: the scan's except-handler rolls
+            # back, which expires the instance, so it must reload while bound
+            assert result.status == "indexed"  # not text_extraction_failed
+
+
 def test_backfill_flags_already_indexed_evidence(tmp_path):
     with TestClient(app) as client:
         case = _case(client)

@@ -1,3 +1,4 @@
+import logging
 import mimetypes
 import os
 import shutil
@@ -20,6 +21,9 @@ from app.services.text_service import (
     chunk_text_with_offsets,
     extract_text,
 )
+
+logger = logging.getLogger(__name__)
+
 
 class DuplicateEvidenceError(Exception):
     def __init__(self, existing_id: int):
