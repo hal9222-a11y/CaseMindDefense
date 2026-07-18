@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -43,6 +44,18 @@ MIN_AUDIO_SECONDS = float(os.getenv("CASEMIND_MIN_AUDIO_SECONDS", "0.4"))
 # under the wrong language model. Restricting the choice to these keeps it on the
 # languages the case actually contains. Empty value ("") restores free detection.
 ALLOWED_LANGS = [s.strip() for s in os.getenv("CASEMIND_WHISPER_LANGS", "he,ru,ar,en").split(",") if s.strip()]
+
+# Per-file wall-clock ceiling. GPU throughput is ~37x realtime (see WHISPER_DEVICE
+# note), so a clip should transcribe in a small fraction of its own length. A file
+# still grinding past this many times its own duration isn't slow, it's pathological
+# (corrupt/noisy audio that spawns endless tiny segments) — one such 12-min WAV held
+# the GPU at 99% for 26+ min and wedged a 37k-item queue behind it. condition_on_
+# previous_text=False stops the infinite-loop case but not this one. On the deadline
+# we stop consuming segments, BANK whatever transcribed so far, and let the queue
+# advance. Default 1x realtime = ~37x the expected time: legit files never reach it;
+# raise CASEMIND_TRANSCRIBE_MAX_REALTIME on a slower/contended GPU if it ever truncates.
+TRANSCRIBE_MAX_REALTIME = float(os.getenv("CASEMIND_TRANSCRIBE_MAX_REALTIME", "1.0"))
+TRANSCRIBE_MIN_BUDGET_SEC = float(os.getenv("CASEMIND_TRANSCRIBE_MIN_BUDGET_SEC", "120"))
 
 
 def _probe_media(path: Path) -> tuple[bool, float]:
@@ -240,6 +253,25 @@ def transcribe_to_chunks(path: Path) -> list[dict] | None:
 
     logger.info("transcribing %s (language=%s)", path.name, info.language)
 
+    audio_seconds = float(getattr(info, "duration", 0.0) or 0.0)
+    budget = max(TRANSCRIBE_MIN_BUDGET_SEC, audio_seconds * TRANSCRIBE_MAX_REALTIME)
+    chunks, truncated = _drain_segments(segments, time.monotonic() + budget)
+    if truncated:
+        logger.warning(
+            "transcription of %s exceeded its %.0fs budget (%.0fs audio); banked %d "
+            "partial chunk(s) and moved on so the queue is not wedged",
+            path.name, budget, audio_seconds, len(chunks),
+        )
+    return chunks
+
+
+def _drain_segments(segments, deadline: float, now=time.monotonic) -> tuple[list[dict], bool]:
+    """Consume Whisper's (lazy) segment generator into chunk dicts, stopping if
+    the wall clock passes `deadline`. Returns (chunks, truncated). The generator
+    is where the GPU actually works, so the deadline is checked between segments —
+    a pathological file that keeps emitting segments is abandoned in bounded time
+    with its partial transcription banked, rather than blocking the whole queue.
+    `now` is injectable so the timeout is unit-testable without real time."""
     chunks: list[dict] = []
     buffer: list[str] = []
     start_time: float | None = None
@@ -258,7 +290,11 @@ def transcribe_to_chunks(path: Path) -> list[dict] | None:
         buffer = []
         start_time = None
 
+    truncated = False
     for segment in segments:
+        if now() > deadline:
+            truncated = True
+            break
         if start_time is None:
             start_time = segment.start
         end_time = segment.end
@@ -267,4 +303,4 @@ def transcribe_to_chunks(path: Path) -> list[dict] | None:
             _flush()
     _flush()
 
-    return chunks
+    return chunks, truncated
