@@ -45,16 +45,18 @@ MIN_AUDIO_SECONDS = float(os.getenv("CASEMIND_MIN_AUDIO_SECONDS", "0.4"))
 # languages the case actually contains. Empty value ("") restores free detection.
 ALLOWED_LANGS = [s.strip() for s in os.getenv("CASEMIND_WHISPER_LANGS", "he,ru,ar,en").split(",") if s.strip()]
 
-# Per-file wall-clock ceiling. GPU throughput is ~37x realtime (see WHISPER_DEVICE
-# note), so a clip should transcribe in a small fraction of its own length. A file
-# still grinding past this many times its own duration isn't slow, it's pathological
-# (corrupt/noisy audio that spawns endless tiny segments) — one such 12-min WAV held
-# the GPU at 99% for 26+ min and wedged a 37k-item queue behind it. condition_on_
-# previous_text=False stops the infinite-loop case but not this one. On the deadline
-# we stop consuming segments, BANK whatever transcribed so far, and let the queue
-# advance. Default 1x realtime = ~37x the expected time: legit files never reach it;
-# raise CASEMIND_TRANSCRIBE_MAX_REALTIME on a slower/contended GPU if it ever truncates.
-TRANSCRIBE_MAX_REALTIME = float(os.getenv("CASEMIND_TRANSCRIBE_MAX_REALTIME", "1.0"))
+# Per-file wall-clock ceiling — a BACKSTOP against a genuinely stuck file, not a
+# throughput cap. On the weak T2000 a long CALL RECORDING legitimately transcribes
+# at 3-7x realtime (a 28-min call took 2-3h and finished in full), and those long
+# calls hold important evidence — so the budget must be generous enough that they
+# complete, never truncated. The queue runs short files first (see
+# _processing_priority), so a long call taking hours sits at the END and can't wedge
+# the 37k short notes behind it; that's what lets this ceiling be loose. Default 10x
+# clears the observed 3-7x with margin; only a file slower than 10x realtime (truly
+# pathological — condition_on_previous_text=False already stops the infinite-loop
+# case) is abandoned with its partial banked. Lower CASEMIND_TRANSCRIBE_MAX_REALTIME
+# only if you deliberately want partial-but-fast over complete transcripts.
+TRANSCRIBE_MAX_REALTIME = float(os.getenv("CASEMIND_TRANSCRIBE_MAX_REALTIME", "10.0"))
 TRANSCRIBE_MIN_BUDGET_SEC = float(os.getenv("CASEMIND_TRANSCRIBE_MIN_BUDGET_SEC", "120"))
 
 

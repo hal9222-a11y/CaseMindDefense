@@ -10,10 +10,10 @@ from app.models.evidence import Evidence
 from app.services.evidence_service import _processing_priority
 
 
-def _mk(session, case_id, name):
+def _mk(session, case_id, name, size_bytes=1):
     ev = Evidence(
         case_id=case_id, original_path=f"x/{name}", stored_path=f"x/{name}",
-        filename=name, sha256=uuid.uuid4().hex, size_bytes=1,
+        filename=name, sha256=uuid.uuid4().hex, size_bytes=size_bytes,
         mime_type="application/octet-stream", status="processing",
     )
     session.add(ev)
@@ -43,3 +43,20 @@ def test_priority_orders_text_images_audio_video():
     assert ordered[1] == img
     assert ordered[2] == aud
     assert ordered[3] == vid
+
+
+def test_within_a_tier_shortest_first():
+    # 99% of a dump's audio is short voice notes; the few long call recordings
+    # each take hours, so short-first drains the quick wins before the queue
+    # spends hours per long call. Size proxies duration.
+    init_db()
+    with Session(get_engine()) as s:
+        case = uuid.uuid4().int % 1_000_000
+        long_call = _mk(s, case, "call_60min.wav", size_bytes=60_000_000)  # inserted first
+        short_note = _mk(s, case, "note.opus", size_bytes=20_000)
+        ordered = s.exec(
+            select(Evidence.id)
+            .where(Evidence.id.in_({long_call, short_note}))
+            .order_by(*_processing_priority())
+        ).all()
+    assert ordered == [short_note, long_call]  # smallest first despite older id

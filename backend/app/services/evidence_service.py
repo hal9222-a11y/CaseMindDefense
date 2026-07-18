@@ -311,7 +311,17 @@ def _processing_priority():
     first: text/chats/UFDR (instant) → images (OCR) → audio (minutes) → video
     (hours). A phone case has hundreds of hours of recordings; without this the
     queue is id-order and a lawyer waits days for the WhatsApp chats to appear
-    behind a wall of interrogation video."""
+    behind a wall of interrogation video.
+
+    Within a tier, SMALLEST first (size is a proxy for duration): 99% of a phone
+    dump's audio is short WhatsApp voice notes (tiny opus) and the rest is a
+    handful of long call recordings (large WAV) that each take HOURS to
+    transcribe in full on the weak GPU. Shortest-first drains the thousands of
+    quick notes before the queue spends hours per long call, so the bulk of the
+    case becomes searchable fast and no single long call blocks it. The long
+    calls still transcribe fully (see the generous TRANSCRIBE_MAX_REALTIME), just
+    last. ponytail: size_bytes proxies duration well enough given the opus-note
+    vs WAV-call split; exact per-tier order among the long files doesn't matter."""
     from sqlalchemy import case
 
     from app.services.text_service import IMAGE_EXTENSIONS
@@ -324,7 +334,7 @@ def _processing_priority():
         (_suffix_in(fname, IMAGE_EXTENSIONS), 2),
         else_=1,  # text, chat, xml, csv, ufdr, pdf, office docs
     )
-    return tier, Evidence.id
+    return tier, Evidence.size_bytes, Evidence.id
 
 
 def _suffix_in(fname_col, extensions):
