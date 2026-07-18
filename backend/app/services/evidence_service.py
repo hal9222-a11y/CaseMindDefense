@@ -440,6 +440,14 @@ def resume_pending_indexing() -> int:
                             index_evidence(session, evidence_id)
                             done += 1
                             io_failures = 0
+                            # index_evidence always sets a terminal status, so a
+                            # done row no longer matches status=='processing'.
+                            # Drop it from `attempted` so that set — and the
+                            # NOT IN it feeds the next query — stays bounded to
+                            # genuinely-stuck rows, instead of growing to the whole
+                            # queue (200k+) and slowing every fetch toward SQLite's
+                            # variable limit.
+                            attempted.discard(evidence_id)
                         except OperationalError:
                             # a drive dropout, not a bad row — retry it after reconnect
                             attempted.discard(evidence_id)

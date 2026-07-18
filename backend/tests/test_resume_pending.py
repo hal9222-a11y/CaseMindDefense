@@ -31,6 +31,45 @@ def test_resume_reindexes_orphaned_processing(tmp_path):
         client.delete(f"/evidence/{ev['id']}")
 
 
+def test_resume_processes_a_multi_item_queue_once_each(monkeypatch):
+    """A done row is dropped from `attempted` (it no longer matches
+    status=='processing'), so the set the NOT-IN query feeds stays bounded on a
+    long queue. Mocks the indexer (no GPU) to exercise the loop itself: every
+    item must index exactly once and the loop must terminate — a re-process bug
+    would loop forever, an over-eager skip would leave items unprocessed."""
+    from app.db import init_db
+    from app.services import evidence_service
+
+    init_db()  # create tables without the app lifespan (no model warmup / GPU)
+    with Session(get_engine()) as session:
+        ids = []
+        for i in range(6):
+            ev = Evidence(
+                original_path=f"x{i}", stored_path=f"x{i}", filename=f"x{i}.txt",
+                sha256=uuid.uuid4().hex, size_bytes=1, mime_type="text/plain",
+                status="processing",
+            )
+            session.add(ev)
+            session.commit()
+            session.refresh(ev)
+            ids.append(ev.id)
+
+    calls: list[int] = []
+
+    def stub_index(session, evidence_id):
+        calls.append(evidence_id)
+        row = session.get(Evidence, evidence_id)
+        row.status = "indexed"  # terminal status -> no longer 'processing'
+        session.add(row)
+        session.commit()
+
+    monkeypatch.setattr(evidence_service, "index_evidence", stub_index)
+
+    processed = resume_pending_indexing()
+    assert processed == 6                 # every queued item, none skipped
+    assert sorted(calls) == sorted(ids)   # each processed EXACTLY once, loop terminated
+
+
 def test_reindex_pending_endpoint(tmp_path):
     with TestClient(app) as client:
         r = client.post("/admin/reindex-pending")
