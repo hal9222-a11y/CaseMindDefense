@@ -22,14 +22,14 @@ def _mk(session, case_id, name, size_bytes=1):
     return ev.id
 
 
-def test_priority_orders_text_images_audio_video():
+def test_priority_orders_text_audio_images_video():
     init_db()
     with Session(get_engine()) as s:
         case = uuid.uuid4().int % 1_000_000
         # insert in an order that id-sorting would get WRONG
         vid = _mk(s, case, "interrogation.vob")
-        aud = _mk(s, case, "voice.opus")
         img = _mk(s, case, "photo.jpg")
+        aud = _mk(s, case, "voice.opus")
         txt = _mk(s, case, "whatsapp_chat.ufdr")
         ids = {vid, aud, img, txt}
 
@@ -38,10 +38,11 @@ def test_priority_orders_text_images_audio_video():
             .where(Evidence.id.in_(ids))
             .order_by(*_processing_priority())
         ).all()
-    # text/ufdr first, video last, regardless of insertion (id) order
+    # text/ufdr first, then AUDIO (voice notes/calls are the key evidence),
+    # then images, video last — regardless of insertion (id) order
     assert ordered[0] == txt
-    assert ordered[1] == img
-    assert ordered[2] == aud
+    assert ordered[1] == aud
+    assert ordered[2] == img
     assert ordered[3] == vid
 
 

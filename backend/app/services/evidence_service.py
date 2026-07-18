@@ -332,11 +332,14 @@ _RESUME_LOCK = threading.Lock()
 
 
 def _processing_priority():
-    """SQL ordering that works the FAST, high-value material off the queue
-    first: text/chats/UFDR (instant) → images (OCR) → audio (minutes) → video
-    (hours). A phone case has hundreds of hours of recordings; without this the
-    queue is id-order and a lawyer waits days for the WhatsApp chats to appear
-    behind a wall of interrogation video.
+    """SQL ordering that works the high-value material off the queue first:
+    text/chats/UFDR (instant) → AUDIO (voice notes & calls) → images (OCR) →
+    video. Audio outranks images deliberately: on a phone dump the WhatsApp voice
+    notes and call recordings are the evidence the case turns on, and a dump can
+    hold ~90k images (stickers, thumbnails, downloads) that would otherwise OCR
+    for days AHEAD of the first voice note. Images are individually faster than
+    transcription, but throughput is not the goal here — getting the spoken
+    evidence transcribed first is.
 
     Within a tier, SMALLEST first (size is a proxy for duration): 99% of a phone
     dump's audio is short WhatsApp voice notes (tiny opus) and the rest is a
@@ -355,8 +358,8 @@ def _processing_priority():
     fname = func.lower(Evidence.filename)
     tier = case(
         (_suffix_in(fname, VIDEO_EXTENSIONS), 4),
-        (_suffix_in(fname, AUDIO_EXTENSIONS), 3),
-        (_suffix_in(fname, IMAGE_EXTENSIONS), 2),
+        (_suffix_in(fname, IMAGE_EXTENSIONS), 3),
+        (_suffix_in(fname, AUDIO_EXTENSIONS), 2),  # voice notes/calls before images
         else_=1,  # text, chat, xml, csv, ufdr, pdf, office docs
     )
     return tier, Evidence.size_bytes, Evidence.id
