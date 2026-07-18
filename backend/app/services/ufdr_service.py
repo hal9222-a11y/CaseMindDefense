@@ -21,7 +21,6 @@ from __future__ import annotations
 import logging
 import re
 import zipfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -113,9 +112,19 @@ def parse_contacts(source) -> dict[str, str]:
 
         source = io.BytesIO(source)
 
+    # report.xml comes from an untrusted phone dump and can be >1GB. stdlib
+    # iterparse expands internal entities, so a crafted "billion laughs" report
+    # would exhaust memory. defusedxml's iterparse still STREAMS (so clear()
+    # keeps memory flat) but refuses entity/DTD/external-ref bombs; on that OR a
+    # malformed/truncated report, return what we parsed so far (best-effort).
+    from xml.etree.ElementTree import ParseError
+
+    from defusedxml.common import DefusedXmlException
+    from defusedxml.ElementTree import iterparse as safe_iterparse
+
     contacts: dict[str, str] = {}
     try:
-        for _event, elem in ET.iterparse(source, events=("end",)):
+        for _event, elem in safe_iterparse(source, events=("end",)):
             if _local(elem.tag) != "model":
                 continue
             mtype = elem.get("type")
@@ -127,7 +136,7 @@ def parse_contacts(source) -> dict[str, str]:
                 elem.clear()
             elif mtype not in _KEEP_UNTIL_CONTACT:
                 elem.clear()  # free the Party/InstantMessage/etc. bulk
-    except ET.ParseError:
+    except (ParseError, DefusedXmlException):
         pass
     return contacts
 

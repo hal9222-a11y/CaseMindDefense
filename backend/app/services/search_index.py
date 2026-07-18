@@ -91,6 +91,14 @@ def _rebuild(session: Session, signature: tuple[int, int]) -> None:
     })
 
 
+def invalidate() -> None:
+    """Force a rebuild on the next search. The (count, max_id) signature can miss
+    a change: SQLite REUSES rowids after the max id is deleted (no AUTOINCREMENT),
+    so reindexing the top block of chunks into the same count yields an identical
+    signature with different vectors — stale hits. Every chunk write calls this."""
+    _cache["signature"] = None
+
+
 def _ensure_fresh(session: Session) -> None:
     signature = _signature(session)
     if _cache["signature"] != signature:

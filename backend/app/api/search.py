@@ -8,8 +8,8 @@ router = APIRouter(prefix="/search", tags=["search"])
 
 @router.get("")
 def search(
-    q: str,
-    limit: int = 10,
+    q: str = Query(..., min_length=1),
+    limit: int = Query(10, ge=1, le=50),
     case_id: int | None = Query(None),
     session: Session = Depends(get_session),
 ):

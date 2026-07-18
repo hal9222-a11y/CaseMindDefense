@@ -59,6 +59,10 @@ def search_chunks(session: Session, q: str, limit: int = 10, case_id: int | None
     query = (q or "").strip()
     if not query:
         return []
+    # defence in depth (the HTTP layer also bounds this): never let a caller pull
+    # the whole chunk table. In SQLite `LIMIT -1` means "no limit", and a huge
+    # limit turns the per-row session.get below into an N+1 scan of everything.
+    limit = max(1, min(limit, 200))
     try:
         return _fts_search(session, query, limit, case_id)
     except Exception as exc:

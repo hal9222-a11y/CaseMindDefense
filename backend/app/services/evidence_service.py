@@ -12,7 +12,7 @@ from app.services.audit_service import log_event
 from app.services.chat_service import chunk_by_messages, is_chat_export
 from app.services.embedding_service import embed_text, embedding_model_name, serialize_embedding
 from app.services.hash_service import sha256_file
-from app.services import llm_service
+from app.services import llm_service, search_index
 from app.services.ner_service import extract_entities
 from app.services.transcription_service import MEDIA_EXTENSIONS, transcribe_to_chunks
 from app.services.text_service import (
@@ -275,6 +275,9 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
     session.add(evidence)
     session.commit()
     session.refresh(evidence)
+    # the chunk set just changed — drop the semantic-search matrix cache so the
+    # next query rebuilds (a reindex can reuse rowids and fool its signature)
+    search_index.invalidate()
     log_event(session, "evidence_indexed", evidence_id=evidence.id, chunks=len(chunks))
 
     # standing queries: flag key names/phones in this fresh material.
@@ -470,6 +473,7 @@ def delete_evidence_record(session: Session, evidence: Evidence) -> None:
     stored = Path(evidence.stored_path)
     session.delete(evidence)
     session.commit()
+    search_index.invalidate()  # chunks removed — force the search matrix to rebuild
 
     if stored.exists():
         try:

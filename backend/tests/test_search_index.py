@@ -106,3 +106,42 @@ def test_scope_and_empty_query():
             # empty query vector -> nothing
             assert search_index.search(session, [], model, None, 5) == []
         client.delete(f"/cases/{case_id}")
+
+
+def test_invalidate_forces_rebuild_when_signature_is_unchanged():
+    """A direct embedding edit changes neither row count nor max id, so the
+    (count, max_id) signature can't detect it — the reindex-rowid-reuse staleness
+    bug in miniature. Without invalidate() the cached matrix serves the STALE
+    vector; invalidate() must force a rebuild from the DB."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    with TestClient(app) as client:
+        case_id, ev_ids = _seed_case(client)
+        with Session(get_engine()) as session:
+            model = embedding_model_name()
+            allowed = set(ev_ids)
+            q = embed_text("деньги наличными", kind="query")
+
+            hits = search_index.search(session, q, model, allowed, 1)  # builds cache
+            assert hits, "expected a money-related hit"
+            top_id = hits[0]["chunk_id"]
+
+            # zero the winning chunk's embedding IN PLACE — no row added/removed,
+            # so (count, max_id) is identical. A zero vector scores 0.
+            chunk = session.get(EvidenceChunk, top_id)
+            dim = len(deserialize_embedding(chunk.embedding))
+            chunk.embedding = ",".join(["0.000000"] * dim)
+            session.add(chunk)
+            session.commit()
+
+            # precondition: the cache is stale (signature unchanged -> no rebuild)
+            stale = search_index.search(session, q, model, allowed, 1)
+            assert stale and stale[0]["chunk_id"] == top_id
+
+            # the fix: invalidate -> rebuild -> the zeroed chunk (score 0) is gone
+            search_index.invalidate()
+            fresh = search_index.search(session, q, model, allowed, 5)
+            assert top_id not in {h["chunk_id"] for h in fresh}, "invalidate did not refresh"
+
+        client.delete(f"/cases/{case_id}")

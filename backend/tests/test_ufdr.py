@@ -208,3 +208,26 @@ def test_extract_ufdr_media_registers_recordings(tmp_path):
             # second run: everything already known
             stats2 = extract_ufdr_media(session, ev["id"])
             assert stats2["registered"] == 0 and stats2["duplicates"] == 2
+
+
+def test_report_xml_entity_bomb_is_refused_not_expanded():
+    """report.xml comes from an untrusted phone dump. A crafted 'billion laughs'
+    entity bomb must be refused (defusedxml), degrading to a best-effort empty
+    result — never expanded into memory — while a normal report still parses."""
+    bomb = (
+        '<?xml version="1.0"?>\n'
+        '<!DOCTYPE p [<!ENTITY a "AAAAAAAAAA"><!ENTITY b "&a;&a;&a;&a;&a;">]>\n'
+        '<project><model type="Contact"><field name="Name">&b;</field>'
+        '<model type="PhoneNumber"><field name="Value">972500000000</field></model>'
+        '</model></project>'
+    ).encode("utf-8")
+    assert parse_contacts(bomb) == {}  # entities forbidden, not expanded, no crash
+
+    good = (
+        '<?xml version="1.0"?>'
+        '<project><model type="Contact">'
+        '<field name="Name">Дима</field>'
+        '<model type="PhoneNumber"><field name="Value">972528772478</field></model>'
+        '</model></project>'
+    ).encode("utf-8")
+    assert parse_contacts(good) == {"972528772478": "Дима"}

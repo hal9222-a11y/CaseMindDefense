@@ -26,6 +26,7 @@ def test_gemini_call_builds_the_right_request(monkeypatch):
 
     def fake_urlopen(req, timeout=None):
         captured["url"] = req.full_url
+        captured["api_key_header"] = req.get_header("X-goog-api-key")
         captured["body"] = json.loads(req.data.decode())
         return _FakeResponse(json.dumps({
             "candidates": [{"content": {"parts": [{"text": "יוליה פגשה את דמיטרי"}]}}]
@@ -42,7 +43,10 @@ def test_gemini_call_builds_the_right_request(monkeypatch):
 
     assert out == "יוליה פגשה את דמיטרי"
     assert "gemini-2.0-flash:generateContent" in captured["url"]
-    assert "key=test-key" in captured["url"]
+    # the API key must ride in a header, never the URL query string (URLs leak
+    # into proxy/server logs); see _gemini_call
+    assert "key=test-key" not in captured["url"]
+    assert captured["api_key_header"] == "test-key"
     # system turn goes to systemInstruction, not into contents
     assert captured["body"]["systemInstruction"]["parts"][0]["text"] == "Translate to Hebrew."
     assert captured["body"]["contents"][0]["parts"][0]["text"] == "Юлия встретила Дмитрия"
