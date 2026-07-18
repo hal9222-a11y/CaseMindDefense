@@ -14,7 +14,7 @@ from app.services.embedding_service import embed_text, embedding_model_name, ser
 from app.services.hash_service import sha256_file
 from app.services import llm_service, search_index
 from app.services.ner_service import extract_entities
-from app.services.transcription_service import MEDIA_EXTENSIONS, transcribe_to_chunks
+from app.services.transcription_service import MEDIA_EXTENSIONS, transcribe_guarded
 from app.services.text_service import (
     IMAGE_EXTENSIONS,
     TextExtractionError,
@@ -162,7 +162,7 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
         chunks = _ufdr_chunks(stored)
         extraction_method = "ufdr"
     elif stored.suffix.lower() in MEDIA_EXTENSIONS:
-        media_chunks = transcribe_to_chunks(stored)
+        media_chunks = transcribe_guarded(stored)
         if media_chunks is None:
             evidence.status = "transcription_unavailable"
             session.add(evidence)

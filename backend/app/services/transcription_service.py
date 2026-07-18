@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -58,6 +59,17 @@ ALLOWED_LANGS = [s.strip() for s in os.getenv("CASEMIND_WHISPER_LANGS", "he,ru,a
 # only if you deliberately want partial-but-fast over complete transcripts.
 TRANSCRIBE_MAX_REALTIME = float(os.getenv("CASEMIND_TRANSCRIBE_MAX_REALTIME", "10.0"))
 TRANSCRIBE_MIN_BUDGET_SEC = float(os.getenv("CASEMIND_TRANSCRIBE_MIN_BUDGET_SEC", "120"))
+
+# Hard-timeout escape hatch for the ONE case the in-process deadline can't catch:
+# a hang INSIDE a single Whisper segment (the GPU C call never returns to Python,
+# so the between-segment check in _drain_segments is never reached). Only a
+# separate process can be wall-clock KILLED mid-call. Gated to LARGE files (the
+# only ones that realistically run long enough to hang; the 100k tiny opus notes
+# never do) and OFF by default — enabling it changes the hot transcription path,
+# so validate on the GPU first. When on, a large file runs in a child process
+# that is killed at its 10x-realtime budget; the tiny majority stay in-process.
+TRANSCRIBE_SUBPROCESS = os.getenv("CASEMIND_TRANSCRIBE_SUBPROCESS", "0") != "0"
+TRANSCRIBE_SUBPROCESS_MIN_MB = float(os.getenv("CASEMIND_TRANSCRIBE_SUBPROCESS_MIN_MB", "3"))
 
 
 def _probe_media(path: Path) -> tuple[bool, float]:
@@ -306,3 +318,59 @@ def _drain_segments(segments, deadline: float, now=time.monotonic) -> tuple[list
     _flush()
 
     return chunks, truncated
+
+
+def transcribe_guarded(path: Path) -> list[dict] | None:
+    """What index_evidence should call. Same contract as transcribe_to_chunks
+    (None = Whisper unavailable, [] = no speech, [chunks] = transcript), but for
+    LARGE files — when CASEMIND_TRANSCRIBE_SUBPROCESS is on — runs the work in a
+    child process that can be hard-killed on a wall-clock timeout, so a hang
+    inside a single segment can't wedge the queue. Small files and the default-
+    off case go straight through the (unchanged) in-process path."""
+    if not TRANSCRIBE_SUBPROCESS:
+        return transcribe_to_chunks(path)
+    try:
+        big = path.stat().st_size >= TRANSCRIBE_SUBPROCESS_MIN_MB * 1024 ** 2
+    except OSError:
+        big = False
+    if not big:
+        return transcribe_to_chunks(path)
+    return _transcribe_subprocess(path)
+
+
+def _transcribe_subprocess(path: Path) -> list[dict] | None:
+    """Transcribe one large file in a child process, KILLED at its wall-clock
+    budget. Returns [] on a hard timeout (the file is abandoned so the queue
+    advances) and falls back in-process if the child can't be launched."""
+    import json
+    import subprocess
+    import tempfile
+
+    # a 4GB GPU cannot hold two Whisper models — drop THIS process's cached model
+    # so the child's load has room. The next small file reloads it (lru_cache).
+    _load_whisper.cache_clear()
+
+    _, duration = _probe_media(path)
+    budget = max(TRANSCRIBE_MIN_BUDGET_SEC, (duration or 0.0) * TRANSCRIBE_MAX_REALTIME) + 120
+    fd, out = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "app.services._transcribe_worker", str(path), out],
+            timeout=budget, check=False,
+            cwd=str(Path(__file__).resolve().parents[2]),
+        )
+        return json.loads(Path(out).read_text(encoding="utf-8")).get("chunks")
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "hard-killed transcription of %s after %.0fs (hung inside a segment); "
+            "abandoned so the queue is not wedged", path.name, budget)
+        return []
+    except Exception as exc:  # worker crash / unreadable output — don't lose the file
+        logger.warning("subprocess transcription failed for %s (%s); retrying in-process", path.name, exc)
+        return transcribe_to_chunks(path)
+    finally:
+        try:
+            os.unlink(out)
+        except OSError:
+            pass
