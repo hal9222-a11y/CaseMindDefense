@@ -33,12 +33,18 @@ FORCED_MODEL = os.getenv("CASEMIND_LLM_MODEL") or None
 # Empty = disabled (default): the feature stays dormant until the user pulls a
 # vision model and sets this, so nothing changes on machines without one.
 VISION_MODEL = os.getenv("CASEMIND_VISION_MODEL", "") or None
+# What the model is told to emit when an image has no identifiable content. Kept
+# as a constant because describe_image also uses it to RECOGNISE that answer and
+# drop it — indexing "no identifiable content" as a caption would fabricate an
+# 'indexed' status on junk images and pollute search with one meaningless string
+# shared by dozens of them.
+VISION_NO_CONTENT_MARKER = "תמונה ללא תוכן מזוהה"
 VISION_PROMPT = os.getenv(
     "CASEMIND_VISION_PROMPT",
     "תאר במשפט אחד קצר ועובדתי מה נראה בתמונה: עצמים, אנשים, סצנה, טקסט גלוי. "
     "אל תנחש ואל תמציא שמות, תאריכים, מקומות, אמנים, רישיונות או פרטים שאינם "
     "נראים בבירור. אם התמונה מטושטשת/גרפית ולא ניתן לזהות תוכן ממשי, כתוב "
-    '"תמונה ללא תוכן מזוהה". ענה בעברית בלבד.',
+    f'"{VISION_NO_CONTENT_MARKER}". ענה בעברית בלבד.',
 )
 
 # names/families that aren't general-purpose chat models — never auto-select
@@ -211,17 +217,6 @@ def translate(text: str, target: str = "Hebrew") -> str | None:
     if not text:
         return ""
 
-    system = {
-        "role": "system",
-        "content": (
-            f"You are a professional legal translator. Translate the user's "
-            f"text into {target}. Output ONLY the translation — no notes, no "
-            f"transliteration in brackets, no original text. Render personal "
-            f"and place names in {target} script. Keep line breaks, timestamps, "
-            f"phone numbers and speaker names in place."
-        ),
-    }
-
     pieces: list[str] = []
     for i, chunk in enumerate(_split_for_translation(text)):
         out = translate_chunk(chunk, target)
@@ -305,7 +300,13 @@ def _vision_available() -> bool:
     if VISION_MODEL is None:
         return False
     if _vision_ok is None:
-        names = {m.get("name", "") for m in _installed_models()}
+        try:
+            names = {m.get("name", "") for m in _installed_models()}
+        except Exception:
+            # Ollama unreachable right now — treat as unavailable but DON'T
+            # cache, so captioning self-enables once Ollama is back. And never
+            # let this probe raise: captioning must not break indexing.
+            return False
         _vision_ok = VISION_MODEL in names or any(
             n.startswith(f"{VISION_MODEL}:") for n in names
         )
@@ -359,7 +360,8 @@ def describe_image(path: str | Path) -> str | None:
     Ollama vision model (CASEMIND_VISION_MODEL). Returns None when disabled, the
     model isn't installed, or the call fails — captioning is best-effort and must
     never break indexing."""
-    if not _vision_available() or LLM_PROVIDER == "gemini":
+    # gemini first: no point probing Ollama for a model we won't use
+    if LLM_PROVIDER == "gemini" or not _vision_available():
         return None  # local vision only for now
     data = _downscaled_image_bytes(path)
     if data is None:
@@ -385,7 +387,14 @@ def describe_image(path: str | Path) -> str | None:
         # GPU busy / model crash / timeout — skip the description, keep indexing.
         logger.warning("image description failed (%s): %s", VISION_MODEL, exc)
         return None
-    return out.strip() or None
+    caption = out.strip()
+    # the model reporting "no identifiable content" is a miss, not a caption —
+    # leave the image as no_text_found rather than indexing the sentinel.
+    # ponytail: exact-match on the instructed marker (tolerating wrapping quotes
+    # and a trailing period); paraphrases the model invents still get indexed.
+    if not caption or caption.strip('".״“” ').strip() == VISION_NO_CONTENT_MARKER:
+        return None
+    return caption
 
 
 def synthesize_answer(question: str, citations: list[dict], role: str = "") -> str | None:
@@ -594,11 +603,14 @@ def _gemini_call(messages: list[dict]) -> str | None:
 
     url = (
         f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+        f"{GEMINI_MODEL}:generateContent"
     )
+    # key goes in a header, never the URL — query strings end up in proxy and
+    # server logs, and this key gates access to case material
     req = urllib.request.Request(
         url, data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json",
+                 "x-goog-api-key": GEMINI_API_KEY},
     )
     try:
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_SECONDS) as resp:

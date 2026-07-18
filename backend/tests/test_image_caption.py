@@ -42,6 +42,32 @@ def test_downscale_shrinks_big_skips_corrupt_passes_small(tmp_path):
     assert _downscaled_image_bytes(tmp_path / "does_not_exist.png") is None
 
 
+def test_no_content_marker_is_dropped_not_indexed(tmp_path, monkeypatch):
+    """When the vision model reports "no identifiable content", that is a miss —
+    indexing the sentinel would fabricate an 'indexed' status and pollute search
+    with one meaningless string shared by every junk image. A real caption, and
+    only a real caption, must come back."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    # feature must look enabled, but no Ollama is touched: stub the model check
+    # and the HTTP call, and hand describe_image a genuinely decodable image so
+    # the return value is decided purely by what the "model" said.
+    monkeypatch.setattr(llm_service, "VISION_MODEL", "stub-vlm")
+    monkeypatch.setattr(llm_service, "_vision_available", lambda: True)
+    img = tmp_path / "x.png"
+    Image.new("RGB", (16, 16), "gray").save(img)
+
+    marker = llm_service.VISION_NO_CONTENT_MARKER
+    for reply in (marker, f'"{marker}"', f"{marker}.", f'  "{marker}".  '):
+        monkeypatch.setattr(llm_service, "_post_chat", lambda *a, **k: reply)
+        assert llm_service.describe_image(img) is None, f"should drop: {reply!r}"
+
+    monkeypatch.setattr(llm_service, "_post_chat", lambda *a, **k: "רכב לבן ברחוב")
+    assert llm_service.describe_image(img) == "רכב לבן ברחוב"
+
+
 def test_no_text_image_gets_described_and_indexed(tmp_path, monkeypatch):
     marker = uuid.uuid4().hex
     caption = f"רכב לבן חונה ליד בניין משרדים {marker}"
