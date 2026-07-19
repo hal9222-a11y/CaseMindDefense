@@ -184,6 +184,21 @@ def auto_resolve_endpoint(case_id: int = Query(...), session: Session = Depends(
     return auto_resolve(session, case_id)
 
 
+@router.get("/connections")
+def connections_endpoint(
+    seed: str = Query(..., min_length=2),
+    case_id: int = Query(...),
+    session: Session = Depends(get_session),
+):
+    """Ask for a person or a number and get what it is connected to: the names it
+    is saved under, the people and (named) phones that co-occur with it in the
+    evidence — most-connected first — and the passages it appears in. A phone
+    seed follows the number through all its aliases."""
+    from app.services.connections_service import find_connections
+
+    return find_connections(session, case_id, seed)
+
+
 @router.get("/phone-directory")
 def phone_directory_endpoint(case_id: int = Query(...), session: Session = Depends(get_session)):
     """Every phone number in the case -> the name(s) it is saved under, folded
