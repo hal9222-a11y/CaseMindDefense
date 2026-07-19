@@ -184,6 +184,31 @@ def auto_resolve_endpoint(case_id: int = Query(...), session: Session = Depends(
     return auto_resolve(session, case_id)
 
 
+@router.get("/phone-directory")
+def phone_directory_endpoint(case_id: int = Query(...), session: Session = Depends(get_session)):
+    """Every phone number in the case -> the name(s) it is saved under, folded
+    across spelling/nickname variants and across each device's phonebook. Numbers
+    saved under several different identities (the 'X here, Y there' signal) sort
+    first. Read-only — derived from the extracted contacts, nothing is written."""
+    from app.services.phonebook_service import phone_directory
+
+    return phone_directory(session, case_id)
+
+
+@router.get("/phone-lookup")
+def phone_lookup_endpoint(
+    number: str = Query(..., min_length=4),
+    case_id: int = Query(...),
+    session: Session = Depends(get_session),
+):
+    """One number -> the name(s) it is saved under across the case, with its
+    spelling/nickname variants grouped. Formatting is ignored (052-222-8282 ==
+    0542228282)."""
+    from app.services.phonebook_service import lookup_phone
+
+    return lookup_phone(session, case_id, number)
+
+
 @router.get("/knowledge-graph")
 def knowledge_graph_endpoint(case_id: int = Query(...), session: Session = Depends(get_session)):
     """The case as one network: resolved people (all their written forms folded
