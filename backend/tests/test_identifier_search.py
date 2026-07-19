@@ -1,8 +1,46 @@
 import uuid
 
 from fastapi.testclient import TestClient
+from sqlmodel import Session
 
+from app.db import get_engine, init_db
 from app.main import app
+from app.models.evidence import Evidence, EvidenceChunk
+from app.services.semantic_search_service import _exact_identifier_search
+
+
+def test_exact_identifier_search_matches_digits_and_scopes(tmp_path):
+    """GPU-free: the phone lookup finds the number across formatting, ignores
+    out-of-scope chunks, and honors the limit — the column-narrowed streaming
+    query must not change any of that."""
+    init_db()
+    with Session(get_engine()) as s:
+        ev = Evidence(
+            original_path="x", stored_path="x", filename="chat.txt",
+            sha256=uuid.uuid4().hex, size_bytes=1, status="indexed",
+        )
+        s.add(ev)
+        s.commit()
+        s.refresh(ev)
+        other = Evidence(
+            original_path="y", stored_path="y", filename="other.txt",
+            sha256=uuid.uuid4().hex, size_bytes=1, status="indexed",
+        )
+        s.add(other)
+        s.commit()
+        s.refresh(other)
+        s.add(EvidenceChunk(evidence_id=ev.id, chunk_index=0,
+                            text="Позвони: 052-465-7474 вечером", source_location="a"))
+        s.add(EvidenceChunk(evidence_id=ev.id, chunk_index=1, text="no number here", source_location="b"))
+        s.add(EvidenceChunk(evidence_id=other.id, chunk_index=0,
+                            text="0524657474 in another case", source_location="c"))
+        s.commit()
+
+        hits = _exact_identifier_search(s, "0524657474", 10, {ev.id})
+        assert [h["evidence_id"] for h in hits] == [ev.id]  # dashed match found, other case excluded
+        assert hits[0]["match"] == "exact" and hits[0]["source_location"] == "a"
+        # allowed=None sees both cases; limit is honored
+        assert len(_exact_identifier_search(s, "0524657474", 1, None)) == 1
 
 
 def _import(client, tmp_path, text: str) -> int:

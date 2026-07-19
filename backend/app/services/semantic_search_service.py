@@ -35,21 +35,32 @@ def _exact_identifier_search(
     evidence_cache: dict[int, Evidence | None] = {}
     results: list[dict] = []
 
-    for chunk in session.exec(select(EvidenceChunk)).all():
-        if allowed is not None and chunk.evidence_id not in allowed:
+    # Stream evidence_id/index/location/text only — NOT the embedding column (a
+    # ~3.6KB string per chunk this path never uses). Loading whole EvidenceChunk
+    # rows turned a phone-number lookup into a 160MB+ table slurp that grows with
+    # the case (embeddings are ~4x the text). ponytail: still an O(n) digit scan;
+    # add a normalized-digits column or FTS if it drags past a few hundred k chunks.
+    stmt = select(
+        EvidenceChunk.evidence_id,
+        EvidenceChunk.chunk_index,
+        EvidenceChunk.source_location,
+        EvidenceChunk.text,
+    )
+    for ev_id, chunk_index, source_location, text in session.exec(stmt):
+        if allowed is not None and ev_id not in allowed:
             continue
-        text = chunk.text or ""
+        text = text or ""
         if needle not in _digits(text):
             continue
-        if chunk.evidence_id not in evidence_cache:
-            evidence_cache[chunk.evidence_id] = session.get(Evidence, chunk.evidence_id)
-        evidence = evidence_cache[chunk.evidence_id]
+        if ev_id not in evidence_cache:
+            evidence_cache[ev_id] = session.get(Evidence, ev_id)
+        evidence = evidence_cache[ev_id]
         results.append(
             {
-                "evidence_id": chunk.evidence_id,
+                "evidence_id": ev_id,
                 "filename": evidence.filename if evidence else None,
-                "chunk_index": chunk.chunk_index,
-                "source_location": chunk.source_location,
+                "chunk_index": chunk_index,
+                "source_location": source_location,
                 "score": 1.0,  # an exact match is exact; no similarity to report
                 "text": text,
                 "match": "exact",
