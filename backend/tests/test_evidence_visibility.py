@@ -49,3 +49,35 @@ def test_the_browser_never_silently_drops_evidence(tmp_path):
 
         # and the server is willing to serve far past the old 1000 ceiling
         assert client.get("/evidence", params={"limit": 20000}).status_code == 200
+
+
+def test_evidence_list_does_not_ship_translations():
+    """The list once returned raw Evidence rows — including each row's full
+    precomputed `translation` text (up to ~80k chars) on every refresh. The UI
+    reads translations only from /evidence/{id}/content."""
+    import uuid as _uuid
+
+    from sqlmodel import Session
+
+    from app.db import get_engine, init_db
+    from app.models.evidence import Evidence
+
+    init_db()
+    with Session(get_engine()) as s:
+        ev = Evidence(
+            original_path="x", stored_path="C:\\x", filename="ru_doc.txt",
+            sha256=_uuid.uuid4().hex, size_bytes=1, status="indexed",
+            translation="תרגום ארוך מאוד " * 1000, translation_status="done",
+        )
+        s.add(ev)
+        s.commit()
+        s.refresh(ev)
+        ev_id = ev.id
+
+    with TestClient(app) as client:
+        rows = client.get("/evidence", params={"limit": 20000}).json()
+        row = next(r for r in rows if r["id"] == ev_id)
+        assert "translation" not in row and "translation_chunks_done" not in row
+        # the fields the desktop actually reads are all present
+        assert {"id", "case_id", "filename", "status", "size_bytes",
+                "mime_type", "imported_at", "stored_path"} <= set(row)

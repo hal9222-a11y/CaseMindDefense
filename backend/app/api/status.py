@@ -65,9 +65,14 @@ def status(session: Session = Depends(get_session)):
 
     current = None
     if processing:
-        # oldest still-processing item = the one the sequential indexer is on
+        # the head of the queue in the SAME order the sequential indexer uses
+        # (tier + size, not id) — ordering by id showed a .wav as "current"
+        # while the log was transcribing voice notes
+        from app.services.evidence_service import _processing_priority
+
         row = session.exec(
-            select(Evidence).where(Evidence.status == "processing").order_by(Evidence.id).limit(1)
+            select(Evidence).where(Evidence.status == "processing")
+            .order_by(*_processing_priority()).limit(1)
         ).first()
         if row is not None:
             current = {"filename": row.filename, "stage": _stage_for(row.filename)}

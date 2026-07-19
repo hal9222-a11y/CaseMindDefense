@@ -74,14 +74,18 @@ def recordings_digest(case_id: int = Query(...), session: Session = Depends(get_
     scannable list. Reuses per-evidence summarization."""
     from app.services.summary_service import summarize_evidence
 
+    from sqlmodel import func
+
+    scope = (Evidence.case_id == case_id, Evidence.status == "transcribed")
+    total = session.exec(select(func.count()).select_from(Evidence).where(*scope)).one()
+    # bounded so the endpoint returns in reasonable time; the UI can paginate.
+    # limit in SQL — loading every transcribed row (each carrying its full
+    # translation text) to slice 25 slurps the table once recordings hit 100k.
     transcribed = session.exec(
-        select(Evidence).where(
-            Evidence.case_id == case_id, Evidence.status == "transcribed"
-        ).order_by(Evidence.id)
+        select(Evidence).where(*scope).order_by(Evidence.id).limit(25)
     ).all()
-    # bounded so the endpoint returns in reasonable time; the UI can paginate
     digest = []
-    for ev in transcribed[:25]:
+    for ev in transcribed:
         result = summarize_evidence(session, ev.id)
         digest.append({
             "evidence_id": ev.id,
@@ -90,4 +94,4 @@ def recordings_digest(case_id: int = Query(...), session: Session = Depends(get_
             "summary": result.get("summary"),
             "reason": result.get("reason"),
         })
-    return {"count": len(transcribed), "shown": len(digest), "digest": digest}
+    return {"count": total, "shown": len(digest), "digest": digest}

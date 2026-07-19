@@ -28,16 +28,17 @@ class ImportFolderRequest(BaseModel):
     case_id: int | None = None
 
 
-def _evidence_dict(ev: Evidence) -> dict:
+def _evidence_dict(ev: Evidence, resolve: bool = True) -> dict:
+    # resolve=True makes stored_path absolute: the desktop opens this file
+    # itself from a different working directory, and pre-absolute-store rows
+    # get fixed here without a migration. The LIST endpoint passes False —
+    # resolve() opens a file handle per row, and 20k rows of that per refresh
+    # is real I/O for a legacy case that no longer exists (0 relative rows).
     return {
         "id": ev.id,
         "case_id": ev.case_id,
         "original_path": ev.original_path,
-        # absolute: the desktop opens this file itself and runs from a different
-        # working directory, so a backend-relative path resolves to nothing
-        # there. Rows imported before the store path was absolute are fixed here
-        # too, without a migration.
-        "stored_path": str(Path(ev.stored_path).resolve()),
+        "stored_path": str(Path(ev.stored_path).resolve()) if resolve else ev.stored_path,
         "filename": ev.filename,
         "sha256": ev.sha256,
         "size_bytes": ev.size_bytes,
@@ -70,7 +71,12 @@ def list_evidence(
     query = select(Evidence)
     if case_id is not None:
         query = query.where(Evidence.case_id == case_id)
-    return session.exec(query.order_by(Evidence.id).offset(offset).limit(limit)).all()
+    rows = session.exec(query.order_by(Evidence.id).offset(offset).limit(limit)).all()
+    # dicts, not raw models: a raw Evidence row carries the full precomputed
+    # `translation` text (up to ~80k chars each), so listing evidence shipped
+    # every translated document's entire Hebrew text on every refresh. The UI
+    # reads translation only from /evidence/{id}/content.
+    return [_evidence_dict(ev, resolve=False) for ev in rows]
 
 
 @router.get("/source-folders")
