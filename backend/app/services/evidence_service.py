@@ -362,7 +362,20 @@ def _processing_priority():
         (_suffix_in(fname, AUDIO_EXTENSIONS), 2),  # voice notes/calls before images
         else_=1,  # text, chat, xml, csv, ufdr, pdf, office docs
     )
-    return tier, Evidence.size_bytes, Evidence.id
+    order = [tier, Evidence.size_bytes, Evidence.id]
+
+    # Operator triage: pull evidence whose SOURCE PATH contains any substring in
+    # CASEMIND_PRIORITY_PATH_SUBSTR (|-separated) to the very front, ahead of the
+    # tiering above. Lets an investigator's curated folder ("relevant calls")
+    # transcribe first out of a 100k-file dump without reordering anything else.
+    # Unset (default) = no change. Reversible: clear the env and restart.
+    markers = [s for s in os.getenv("CASEMIND_PRIORITY_PATH_SUBSTR", "").split("|") if s]
+    if markers:
+        cond = Evidence.original_path.contains(markers[0])
+        for m in markers[1:]:
+            cond = cond | Evidence.original_path.contains(m)
+        order.insert(0, case((cond, 0), else_=1))
+    return tuple(order)
 
 
 def _suffix_in(fname_col, extensions):
