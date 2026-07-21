@@ -5,6 +5,7 @@ import math
 from PySide6.QtCore import QPointF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QGraphicsEllipseItem,
     QGraphicsScene,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -51,19 +53,55 @@ class GraphPage(QWidget):
         self.mode_selector = QComboBox()
         self.mode_selector.addItem("Entities", "entities")
         self.mode_selector.addItem("People (relations)", "people")
+        self.mode_selector.addItem("Knowledge (AI)", "knowledge")
         self.mode_selector.currentIndexChanged.connect(self._on_mode_changed)
 
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.clicked.connect(self.refresh)
 
+        # --- controls: without these the graph is a hairball nobody can read ---
+        self.people_only = QCheckBox("ללא טלפונים/ת.ז")
+        self.people_only.setChecked(True)
+        self.people_only.setToolTip("הסתר טלפונים / ת.ז / מספרי רכב — הצג רק אנשים")
+        self.people_only.stateChanged.connect(self.refresh)
+
+        self.nodes_spin = QSpinBox()
+        self.nodes_spin.setRange(5, 60)
+        self.nodes_spin.setValue(20)
+        self.nodes_spin.setPrefix("אנשים: ")
+        self.nodes_spin.setToolTip("כמה שמות להציג (הנפוצים ביותר)")
+        self.nodes_spin.valueChanged.connect(self.refresh)
+
+        self.links_spin = QSpinBox()
+        self.links_spin.setRange(1, 10)
+        self.links_spin.setValue(3)
+        self.links_spin.setPrefix("קשרים לאדם: ")
+        self.links_spin.setToolTip(
+            "כמה קשרים חזקים להציג לכל אדם. גבוה מדי = רשת בלתי קריאה"
+        )
+        self.links_spin.valueChanged.connect(self.refresh)
+
+        self.strength_spin = QSpinBox()
+        self.strength_spin.setRange(1, 50)
+        self.strength_spin.setValue(2)
+        self.strength_spin.setPrefix("מינימום משפטים: ")
+        self.strength_spin.setToolTip("קשר ייווצר רק אם השניים מוזכרים יחד בכל כך הרבה משפטים")
+        self.strength_spin.valueChanged.connect(self.refresh)
+
+        self._entity_controls = [
+            self.people_only, self.nodes_spin, self.links_spin, self.strength_spin,
+        ]
+
         title = QLabel("Graph")
         title.setStyleSheet("font-size: 18px; font-weight: bold;")
-        self.legend = QLabel("size = mentions · edge = shared evidence · double-click = search")
+        self.legend = QLabel("גודל = אזכורים · קו = הוזכרו באותו משפט · double-click = חיפוש")
         self.legend.setStyleSheet("color: #9CA3AF;")
 
         top_bar = QHBoxLayout()
         top_bar.addWidget(title)
         top_bar.addWidget(self.mode_selector)
+        for control in self._entity_controls:
+            top_bar.addWidget(control)
         top_bar.addWidget(self.legend)
         top_bar.addStretch()
         top_bar.addWidget(self.refresh_button)
@@ -83,26 +121,39 @@ class GraphPage(QWidget):
         return self.mode_selector.currentData()
 
     def _on_mode_changed(self, _index: int) -> None:
-        people = self._mode() == "people"
-        self.legend.setText(
-            "אנשים · קו = קשר (אח / אבא של…) · double-click = חיפוש"
-            if people
-            else "size = mentions · edge = shared evidence · double-click = search"
-        )
+        mode = self._mode()
+        # the tuning controls only apply to the co-occurrence graph
+        for control in self._entity_controls:
+            control.setVisible(mode == "entities")
+        self.legend.setText({
+            "people": "אנשים · קו = קשר (אח / אבא של…) · double-click = חיפוש",
+            "knowledge": "זהויות מאוחדות + טלפונים/מקומות/ארגונים · קו = קשר מצוטט · double-click = חיפוש",
+        }.get(mode, "גודל = אזכורים · קו = הוזכרו באותו משפט · double-click = חיפוש"))
         self.refresh()
 
     def refresh(self) -> None:
         self.refresh_button.setEnabled(False)
-        if self._mode() == "people":
-            if self.api.current_case_id is None:
-                self.refresh_button.setEnabled(True)
-                self.scene.clear()
-                self.scene.addText("בחר תיק ספציפי בדף Evidence כדי לראות את רשת האנשים.")
-                return
+        mode = self._mode()
+        if mode in ("people", "knowledge") and self.api.current_case_id is None:
+            self.refresh_button.setEnabled(True)
+            self.scene.clear()
+            self.scene.addText("בחר תיק ספציפי בדף Evidence כדי לראות את הרשת.")
+            return
+        if mode == "people":
             run_async(self.api.person_graph, self.api.current_case_id,
                       on_done=self._on_people_loaded, on_error=self._on_failed)
+        elif mode == "knowledge":
+            run_async(self.api.knowledge_graph, self.api.current_case_id,
+                      on_done=self._on_knowledge_loaded, on_error=self._on_failed)
         else:
-            run_async(self.api.entity_graph, on_done=self._on_loaded, on_error=self._on_failed)
+            run_async(
+                self.api.entity_graph,
+                max_nodes=self.nodes_spin.value(),
+                only_people=self.people_only.isChecked(),
+                min_edge_weight=self.strength_spin.value(),
+                max_edges_per_node=self.links_spin.value(),
+                on_done=self._on_loaded, on_error=self._on_failed,
+            )
 
     def reset(self) -> None:
         """Force a reload next time shown (used when the case scope changes)."""
@@ -116,6 +167,29 @@ class GraphPage(QWidget):
     def _on_people_loaded(self, graph: dict) -> None:
         self.refresh_button.setEnabled(True)
         self._draw_people(graph)
+
+    def _on_knowledge_loaded(self, graph: dict) -> None:
+        self.refresh_button.setEnabled(True)
+        # adapt the knowledge shape (id/type/label/mentions + typed edges) to
+        # the entity renderer, which draws by name: label shows the canonical
+        # form, aliases ride in the tooltip-ish suffix
+        id_to_label: dict[str, str] = {}
+        nodes = []
+        for n in graph.get("nodes", []):
+            label = n["label"]
+            if n.get("aliases"):
+                label = f"{label} (+{len(n['aliases'])})"
+            id_to_label[n["id"]] = label
+            nodes.append({"entity": label, "type": n["type"], "count": n.get("mentions", 0)})
+        edges = [
+            {
+                "a": id_to_label[e["a"]], "b": id_to_label[e["b"]],
+                "weight": max(e.get("weight", 0), 1),
+            }
+            for e in graph.get("edges", [])
+            if e["a"] in id_to_label and e["b"] in id_to_label
+        ]
+        self._draw({"nodes": nodes, "edges": edges})
 
     def _on_failed(self, error: str) -> None:
         self.refresh_button.setEnabled(True)

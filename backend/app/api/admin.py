@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.core.settings import get_settings
@@ -17,10 +19,114 @@ from app.services.hash_service import sha256_file
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
+def _drive_of(path: str) -> str:
+    r"""The root a path lives under, so paths from different drives are grouped
+    apart: '\\server\share' for UNC, 'D:' for local."""
+    if path.startswith("\\\\") or path.startswith("//"):
+        parts = path.replace("/", "\\").split("\\")
+        return "\\\\" + "\\".join(parts[2:4])  # \\server\share
+    return path[:2]
+
+
+class BackgroundRequest(BaseModel):
+    enabled: bool
+
+
+@router.post("/background")
+def set_background(req: BackgroundRequest):
+    """Turn background material processing (translation + re-indexing) on or off
+    at runtime. Pausing takes effect between files — whatever is mid-process
+    finishes, nothing new starts. Not persisted: a restart resumes working."""
+    from app.services import background_control
+
+    background_control.set_paused(not req.enabled)
+    return {"background_enabled": req.enabled}
+
+
+@router.get("/source-root")
+def source_root(session: Session = Depends(get_session)):
+    """The folder most of the evidence was imported FROM. Shown so the user can
+    re-point it after moving the files. Evidence can come from several drives;
+    we report the one holding the most files (the folder most worth re-pointing)."""
+    paths = [p for p in session.exec(select(Evidence.original_path)).all() if p]
+    if not paths:
+        return {"root": "", "count": 0}
+
+    groups: dict[str, list[str]] = {}
+    for p in paths:
+        groups.setdefault(_drive_of(p), []).append(p)
+    biggest = max(groups.values(), key=len)
+    try:
+        root = os.path.commonpath(biggest)
+    except ValueError:
+        root = os.path.dirname(biggest[0])
+    return {"root": root, "count": len(biggest), "total": len(paths)}
+
+
+class RelocateRequest(BaseModel):
+    old_prefix: str
+    new_prefix: str
+
+
+@router.post("/relocate-source")
+def relocate_source(req: RelocateRequest, session: Session = Depends(get_session)):
+    """Re-point the recorded source folder after the evidence was moved to a new
+    location (e.g. a network share copied to a local disk). Only the recorded
+    original_path is rewritten — the files themselves already live in the app's
+    local store, so nothing is copied or moved. Makes the Inspector accurate and
+    future re-imports read from the fast path.
+    """
+    old = req.old_prefix.rstrip("/\\")
+    new = req.new_prefix.rstrip("/\\")
+    if not old or not new:
+        raise HTTPException(status_code=422, detail="old and new folder are required")
+
+    def under(path: str) -> bool:
+        # match at a folder boundary, not any character: old="C:\case" must NOT
+        # match "C:\case2\..." or "C:\caseX" and corrupt their paths
+        return path == old or path.startswith(old + "\\") or path.startswith(old + "/")
+
+    rows = session.exec(select(Evidence)).all()
+    updated = 0
+    for ev in rows:
+        if ev.original_path and under(ev.original_path):
+            ev.original_path = new + ev.original_path[len(old):]
+            session.add(ev)
+            updated += 1
+    session.commit()
+    log_event(session, "source_relocated", old=old, new=new, updated=updated)
+    return {"updated": updated, "old": old, "new": new}
+
+
 @router.post("/verify-audit")
 def verify_audit(session: Session = Depends(get_session)):
     """Audit-log tamper detection: recomputes the event hash chain."""
     return verify_audit_chain(session)
+
+
+@router.post("/reindex-all")
+def reindex_all(background: BackgroundTasks, session: Session = Depends(get_session)):
+    """Re-run the whole analysis over material that is already imported.
+
+    Needed when the analysis itself changes — extracting the conversation
+    participants, real Russian NER, validated phone numbers. Evidence indexed by
+    the older pipeline keeps its old (worse) entities until it is re-read.
+
+    Marks everything as pending and lets the existing sequential background
+    indexer work through it, so the app stays usable while it runs.
+    """
+    from app.services.evidence_service import resume_pending_indexing
+
+    evidence = session.exec(
+        select(Evidence).where(Evidence.status.not_in(("processing", "imported")))
+    ).all()
+    for item in evidence:
+        item.status = "processing"
+        session.add(item)
+    session.commit()
+
+    background.add_task(resume_pending_indexing)
+    return {"queued": len(evidence), "status": "reindexing started"}
 
 
 @router.post("/reindex-pending")
@@ -87,6 +193,25 @@ def create_backup(session: Session = Depends(get_session)):
     db_file = Path(db_url.replace("sqlite:///", "", 1))
     db_snapshot = backups_dir / f"db_snapshot_{stamp}.sqlite"
 
+    # A backup must never fill the drive it protects. Audio/video/images barely
+    # compress, so the raw byte sum (evidence + the DB, counted twice for the
+    # snapshot and its copy inside the zip) is a safe upper bound on what we're
+    # about to write. Refuse up front rather than fail mid-zip and leave a giant
+    # half-written file eating the last free bytes.
+    import shutil
+
+    evidence_files = [f for f in store_dir.rglob("*") if f.is_file()] if store_dir.exists() else []
+    needed = db_file.stat().st_size * 2 + sum(f.stat().st_size for f in evidence_files)
+    free = shutil.disk_usage(backups_dir).free
+    if free < needed * 1.05:
+        raise HTTPException(
+            status_code=507,
+            detail=(
+                f"אין מספיק מקום פנוי לגיבוי: דרושים ~{needed // 2**30 + 1} GB, "
+                f"פנויים {free // 2**30} GB. פנה מקום או גבה לכונן אחר."
+            ),
+        )
+
     src = sqlite3.connect(str(db_file))
     dst = sqlite3.connect(str(db_snapshot))
     try:
@@ -96,14 +221,17 @@ def create_backup(session: Session = Depends(get_session)):
         src.close()
 
     files = 0
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(db_snapshot, "casemind_defense.db")
-        if store_dir.exists():
-            for f in sorted(store_dir.rglob("*")):
-                if f.is_file():
-                    zf.write(f, Path("evidence_store") / f.relative_to(store_dir))
-                    files += 1
-    db_snapshot.unlink()
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(db_snapshot, "casemind_defense.db")
+            for f in evidence_files:
+                zf.write(f, Path("evidence_store") / f.relative_to(store_dir))
+                files += 1
+    except BaseException:
+        zip_path.unlink(missing_ok=True)  # no giant half-written zip left behind
+        raise
+    finally:
+        db_snapshot.unlink(missing_ok=True)  # no stray snapshot when zipping fails
 
     result = {
         "path": str(zip_path.resolve()),

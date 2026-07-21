@@ -17,6 +17,7 @@ PERSONS = "/persons"
 ADMIN_VERIFY = "/admin/verify-evidence"
 ADMIN_BACKUP = "/admin/backup"
 CONTRADICTIONS = "/contradictions"
+CONTRADICTION_CLAIMS = "/contradictions/claims"
 AUDIT = "/audit"
 
 

@@ -4,7 +4,30 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import evidence_ai_service, llm_service
-from app.services.llm_service import _clean_answer, _has_prose
+from app.services.llm_service import _clean_answer, _has_prose, _pick_model
+
+
+def test_pick_model_prefers_largest_general_model_within_ceiling(monkeypatch):
+    # exercise the auto-select path regardless of any CASEMIND_LLM_MODEL set on
+    # the machine running the tests (a forced model would short-circuit this)
+    monkeypatch.setattr(llm_service, "FORCED_MODEL", None)
+    models = [
+        {"name": "qwen3.5:9b", "details": {"parameter_size": "9.7B", "family": "qwen35"}},
+        {"name": "gemma4:latest", "details": {"parameter_size": "8.0B", "family": "gemma4"}},
+        {"name": "qwen2.5:0.5b", "details": {"parameter_size": "494.03M", "family": "qwen2"}},
+        {"name": "deepseek-ocr:3b", "details": {"parameter_size": "3.3B", "family": "deepseekocr"}},
+        {"name": "qwen2.5vl:3b", "details": {"parameter_size": "3.8B", "family": "qwen25vl"}},
+        {"name": "big:27b", "details": {"parameter_size": "27.8B", "family": "qwen35"}},
+    ]
+    # OCR/vision excluded, 27B over the ceiling, and the 9.7B qwen3.5 is a
+    # REASONING model (minutes of hidden thinking per call = timeouts) -> the
+    # largest plain chat model wins even though it is smaller
+    assert _pick_model(models) == "gemma4:latest"
+    # only reasoning models installed -> still pick one, never None
+    assert _pick_model(models[:1]) == "qwen3.5:9b"
+    # a tiny-only machine still gets an LLM rather than None
+    assert _pick_model([{"name": "qwen2.5:0.5b", "details": {"parameter_size": "0.5B"}}]) == "qwen2.5:0.5b"
+    assert _pick_model([]) is None
 
 
 def test_clean_answer_normalizes_small_model_artifacts():
@@ -72,7 +95,7 @@ def test_ask_uses_llm_answer_when_available(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_service, "ollama_available", lambda: True)
     monkeypatch.setattr(
         llm_service, "synthesize_answer",
-        lambda question, citations: "The witness saw a white vehicle [1].",
+        lambda question, citations, role=None: "The witness saw a white vehicle [1].",
     )
     with TestClient(app) as client:
         marker = uuid.uuid4().hex
@@ -86,7 +109,7 @@ def test_ask_uses_llm_answer_when_available(tmp_path, monkeypatch):
 
 def test_llm_not_found_keeps_citations_visible(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_service, "ollama_available", lambda: True)
-    monkeypatch.setattr(llm_service, "synthesize_answer", lambda q, c: "NOT_FOUND")
+    monkeypatch.setattr(llm_service, "synthesize_answer", lambda q, c, role=None: "NOT_FOUND")
     with TestClient(app) as client:
         marker = uuid.uuid4().hex
         _import_marked_doc(client, tmp_path, marker)
@@ -98,7 +121,7 @@ def test_llm_not_found_keeps_citations_visible(tmp_path, monkeypatch):
 
 def test_llm_failure_degrades_gracefully(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_service, "ollama_available", lambda: True)
-    monkeypatch.setattr(llm_service, "synthesize_answer", lambda q, c: None)
+    monkeypatch.setattr(llm_service, "synthesize_answer", lambda q, c, role=None: None)
     with TestClient(app) as client:
         marker = uuid.uuid4().hex
         _import_marked_doc(client, tmp_path, marker)

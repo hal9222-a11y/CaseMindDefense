@@ -147,6 +147,36 @@ def _extract_pdf_text(path: Path) -> str:
         raise TextExtractionError(f"PDF text extraction failed: {exc}") from exc
 
 
+def _extract_xml_text(path: Path) -> str:
+    """Forensic export XML (interception manifests, call logs, contacts) keeps
+    the real data in ATTRIBUTES — Target, Comment, timestamps — not in text
+    nodes, so a plain itertext() would return almost nothing. Pull both."""
+    from xml.etree.ElementTree import ParseError
+
+    from defusedxml.common import DefusedXmlException
+    from defusedxml.ElementTree import parse as safe_parse
+
+    # This XML comes from an untrusted phone dump. stdlib ElementTree expands
+    # internal entities, so a crafted "billion laughs" file would exhaust memory
+    # and take indexing down. defusedxml refuses entity/DTD/external-ref tricks;
+    # on that OR malformed XML, fall back to tag-stripping the raw text (regex on
+    # literal bytes never expands entities) rather than losing the file.
+    try:
+        root = safe_parse(path).getroot()
+    except (ParseError, DefusedXmlException):
+        raw = path.read_text(encoding="utf-8", errors="ignore")
+        return re.sub(r"<[^>]+>", " ", raw).strip()
+
+    parts: list[str] = []
+    for el in root.iter():
+        if el.text and el.text.strip():
+            parts.append(el.text.strip())
+        for key, value in el.attrib.items():
+            if value and value.strip():
+                parts.append(f"{key}: {value.strip()}")
+    return "\n".join(parts)
+
+
 def extract_text(path: Path) -> tuple[str, str]:
     """Extract text from a file.
 
@@ -157,8 +187,17 @@ def extract_text(path: Path) -> tuple[str, str]:
     """
     suffix = path.suffix.lower()
 
-    if suffix == ".txt":
+    if suffix in (".txt", ".csv"):
+        # .csv: forensic exports ship call logs / cell records as CSV — the
+        # comma-separated text is perfectly searchable as-is
         return path.read_text(encoding="utf-8", errors="ignore").strip(), "text"
+
+    if suffix in (".html", ".htm"):
+        raw = path.read_text(encoding="utf-8", errors="ignore")
+        return re.sub(r"<[^>]+>", " ", raw).strip(), "text"
+
+    if suffix == ".xml":
+        return _extract_xml_text(path), "text"
 
     if suffix == ".pdf":
         text = _extract_pdf_text(path)

@@ -1,16 +1,34 @@
+import logging
 import mimetypes
 import os
 import shutil
+import threading
 from pathlib import Path
+from sqlalchemy import func
 from sqlmodel import Session, select
 from app.core.settings import get_settings
 from app.models.evidence import Evidence, EvidenceChunk, ExtractedEntity
 from app.services.audit_service import log_event
+from app.services.chat_service import chunk_by_messages, is_chat_export
 from app.services.embedding_service import embed_text, embedding_model_name, serialize_embedding
 from app.services.hash_service import sha256_file
+from app.services import llm_service, search_index
 from app.services.ner_service import extract_entities
-from app.services.transcription_service import MEDIA_EXTENSIONS, transcribe_to_chunks
-from app.services.text_service import TextExtractionError, chunk_text_with_offsets, extract_text
+from app.services.transcription_service import MEDIA_EXTENSIONS, transcribe_guarded
+from app.services.ufed_reader_service import is_ufed_reader_report
+
+# A <30KB image or any .webp is a WhatsApp sticker / thumbnail / emoji, never
+# evidentiary text — a phone dump has ~15k of them. Skip OCR on those.
+STICKER_MAX_BYTES = 30 * 1024
+from app.services.text_service import (
+    IMAGE_EXTENSIONS,
+    TextExtractionError,
+    chunk_text_with_offsets,
+    extract_text,
+)
+
+logger = logging.getLogger(__name__)
+
 
 class DuplicateEvidenceError(Exception):
     def __init__(self, existing_id: int):
@@ -29,6 +47,10 @@ def _check_import_allowed(path: Path) -> None:
     roots = os.getenv("CASEMIND_IMPORT_ROOTS")
     if not roots:
         return
+    # our own store is always a legitimate source — the UFDR media extractor
+    # stages files there before registering them
+    if path.is_relative_to(get_settings().evidence_store_dir):
+        return
     for root in roots.split(os.pathsep):
         root = root.strip()
         if root and path.is_relative_to(Path(root).resolve()):
@@ -39,6 +61,10 @@ SUPPORTED_EXTENSIONS = {
     ".txt", ".pdf",
     ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".gif", ".webp",
     ".docx", ".xlsx", ".pptx", ".eml", ".msg",
+    ".xml",  # forensic export manifests / call logs — data lives in attributes
+    ".csv",  # call logs / cell records ship as CSV in forensic exports
+    ".html", ".htm",  # saved pages / report exports — indexed as tag-stripped text
+    ".ufdr",  # Cellebrite phone-extraction report (zip): chats + contacts inside
     *MEDIA_EXTENSIONS,
 }
 
@@ -59,7 +85,17 @@ def register_evidence(session: Session, source_path: str, case_id: int | None = 
     store_dir.mkdir(parents=True, exist_ok=True)
     stored = store_dir / f"{digest}{src.suffix.lower()}"
     if not stored.exists():
-        shutil.copy2(src, stored)
+        # copy via temp + atomic rename: a copy that dies midway (disk full,
+        # unplugged drive) must not leave a truncated file at the final name —
+        # the next import attempt would see it "exists", skip the copy, and
+        # register evidence pointing at a corrupt copy of the original
+        tmp = stored.with_suffix(stored.suffix + ".part")
+        try:
+            shutil.copy2(src, tmp)
+            tmp.replace(stored)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
 
     evidence = Evidence(
         case_id=case_id,
@@ -79,12 +115,49 @@ def register_evidence(session: Session, source_path: str, case_id: int | None = 
     return evidence
 
 
-def index_evidence(session: Session, evidence_id: int) -> Evidence:
-    """Extract text, chunk, embed. Replaces any existing chunks (reindex-safe)."""
-    evidence = session.get(Evidence, evidence_id)
-    if evidence is None:
-        raise ValueError(f"evidence {evidence_id} not found")
+def _ufdr_chunks(stored: Path) -> list[dict]:
+    """Every conversation in a Cellebrite report as message chunks, plus a
+    contacts-directory chunk so the phone book (name <-> number) is searchable
+    and its names are extracted as people. Each chunk's speakers (name + phone)
+    flow through the same entity/graph pipeline as a WhatsApp export."""
+    from app.services.ufdr_service import extract_ufdr
 
+    data = extract_ufdr(stored)
+    chunks: list[dict] = []
+    for chat in data["chats"]:
+        chunks.extend(chat["chunks"])
+    if data["contacts"]:
+        directory = "\n".join(f"{name}: +{num}" for num, name in data["contacts"].items())
+        chunks.append({
+            "text": "אנשי קשר (מדריך המכשיר):\n" + directory,
+            "source_location": "contacts",
+            "speakers": list(data["contacts"].values()),
+        })
+    return chunks
+
+
+def _ufed_reader_chunks(stored: Path) -> list[dict]:
+    """SMS/MMS conversations + phone book from a UFED Reader Report.xml (the
+    folder-extraction format), as message chunks that flow through the same
+    entity/graph pipeline as chats. Mirrors _ufdr_chunks for the .xml reports the
+    folder-only devices ship instead of a .ufdr."""
+    from app.services.ufed_reader_service import extract_ufed_reader
+
+    data = extract_ufed_reader(stored)
+    chunks: list[dict] = []
+    for chat in data["chats"]:
+        chunks.extend(chat["chunks"])
+    if data["contacts"]:
+        directory = "\n".join(f"{name}: +{num}" for num, name in data["contacts"].items())
+        chunks.append({
+            "text": "אנשי קשר (מדריך המכשיר):\n" + directory,
+            "source_location": "contacts",
+            "speakers": list(data["contacts"].values()),
+        })
+    return chunks
+
+
+def _drop_old_index(session: Session, evidence_id: int) -> None:
     for old_chunk in session.exec(
         select(EvidenceChunk).where(EvidenceChunk.evidence_id == evidence_id)
     ).all():
@@ -93,12 +166,32 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
         select(ExtractedEntity).where(ExtractedEntity.evidence_id == evidence_id)
     ).all():
         session.delete(old_entity)
-    session.commit()
+
+
+def index_evidence(session: Session, evidence_id: int) -> Evidence:
+    """Extract text, chunk, embed. Replaces any existing chunks (reindex-safe).
+
+    The old index is dropped only once the new one is ready, in the same
+    transaction. Deleting it up-front left the evidence with ZERO chunks for as
+    long as OCR or transcription took — minutes — during which it was invisible
+    to search, the timeline and the AI. A lawyer searching in that window would
+    be told the material is not in the case, which is the same lie as a search
+    that invents evidence, pointing the other way.
+    """
+    evidence = session.get(Evidence, evidence_id)
+    if evidence is None:
+        raise ValueError(f"evidence {evidence_id} not found")
 
     stored = Path(evidence.stored_path)
 
-    if stored.suffix.lower() in MEDIA_EXTENSIONS:
-        media_chunks = transcribe_to_chunks(stored)
+    if stored.suffix.lower() == ".ufdr":
+        chunks = _ufdr_chunks(stored)
+        extraction_method = "ufdr"
+    elif stored.suffix.lower() == ".xml" and is_ufed_reader_report(stored):
+        chunks = _ufed_reader_chunks(stored)
+        extraction_method = "ufed_reader"
+    elif stored.suffix.lower() in MEDIA_EXTENSIONS:
+        media_chunks = transcribe_guarded(stored)
         if media_chunks is None:
             evidence.status = "transcription_unavailable"
             session.add(evidence)
@@ -108,6 +201,13 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
             return evidence
         chunks = media_chunks
         extraction_method = "transcription"
+    elif stored.suffix.lower() in IMAGE_EXTENSIONS and (
+        stored.suffix.lower() == ".webp" or (evidence.size_bytes or 0) < STICKER_MAX_BYTES
+    ):
+        # sticker / thumbnail / emoji — skip the OCR, land in 'no_text_found'
+        # like an OCR that found nothing. Real photos/screenshots are larger.
+        chunks = []
+        extraction_method = "sticker"
     else:
         try:
             text, extraction_method = extract_text(stored)
@@ -118,25 +218,71 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
             session.refresh(evidence)
             log_event(session, "text_extraction_failed", evidence_id=evidence.id, error=str(exc))
             return evidence
-        chunks = chunk_text_with_offsets(text)
+        # A WhatsApp export is a conversation, not a wall of text. Chunking it
+        # on message boundaries keeps citations whole, and — far more important
+        # — lets us record WHO SPOKE in each passage. The participants are the
+        # people the case is actually about, and they were never extracted.
+        if is_chat_export(text):
+            chunks = chunk_by_messages(text)
+            extraction_method = "chat"
+        else:
+            chunks = chunk_text_with_offsets(text)
+
+    # A photo with NO readable text used to land in 'no_text_found' and vanish
+    # from search. When OCR finds nothing in an image, ask a vision model to
+    # describe it so it's still findable ("locate the picture of the car"). Only
+    # the text-less images pay the vision cost; an image whose OCR already gave
+    # text keeps that. Best-effort — disabled/failed captioning leaves the image
+    # exactly as OCR left it. Cross-lingual embeddings make the description
+    # findable in Hebrew even if the model answers in English.
+    if not chunks and extraction_method != "sticker" and stored.suffix.lower() in IMAGE_EXTENSIONS:
+        caption = llm_service.describe_image(stored)
+        if caption:
+            extraction_method = "caption"  # no OCR text — the description IS the content
+            chunks = [{"text": caption, "source_location": "image:description"}]
+
+    # Build the whole new index in memory FIRST. Embedding and NER are the slow
+    # part, and the evidence must stay searchable while they run.
+    new_chunks: list[EvidenceChunk] = []
+    new_entities: list[ExtractedEntity] = []
+
     for idx, chunk_data in enumerate(chunks):
         chunk_text = chunk_data.get("text") or ""
         if not chunk_text.strip():
             continue
         vec = embed_text(chunk_text)
-        ev_chunk = EvidenceChunk(
-            evidence_id=evidence.id,
-            chunk_index=idx,
-            text=chunk_text,
-            source_location=chunk_data.get("source_location") or f"chunk:{idx}",
-            embedding=serialize_embedding(vec),
-            embedding_model=embedding_model_name(),
-            embedding_dimension=len(vec),
+        new_chunks.append(
+            EvidenceChunk(
+                evidence_id=evidence.id,
+                chunk_index=idx,
+                text=chunk_text,
+                source_location=chunk_data.get("source_location") or f"chunk:{idx}",
+                embedding=serialize_embedding(vec),
+                embedding_model=embedding_model_name(),
+                embedding_dimension=len(vec),
+            )
         )
-        session.add(ev_chunk)
 
-        for entity in extract_entities(chunk_text):
-            session.add(
+        # A caption is a vision model's guess, not case content. Running NER on
+        # it would inject invented "people"/places (the model hallucinates names)
+        # into the entity graph as if they were real parties. Keep the caption
+        # searchable (embedded above) but never let it create entities.
+        found = [] if extraction_method == "caption" else extract_entities(chunk_text)
+
+        # The people who sent the messages in this passage. Recording them makes
+        # the conversation participants first-class people, and because both
+        # sides of a chat appear in the same passage, the graph then shows who
+        # actually talks to whom.
+        for speaker in chunk_data.get("speakers", []):
+            found.append({"text": speaker, "label": "person"})
+
+        seen: set[tuple[str, str]] = set()
+        for entity in found:
+            key = (entity["text"], entity["label"])
+            if key in seen:
+                continue
+            seen.add(key)
+            new_entities.append(
                 ExtractedEntity(
                     evidence_id=evidence.id,
                     chunk_index=idx,
@@ -144,6 +290,14 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
                     label=entity["label"],
                 )
             )
+
+    # Swap old for new in one transaction: the evidence is never chunk-less, so
+    # a search running right now cannot be told the material is not in the case.
+    _drop_old_index(session, evidence_id)
+    for chunk in new_chunks:
+        session.add(chunk)
+    for entity in new_entities:
+        session.add(entity)
 
     if chunks:
         evidence.status = {
@@ -157,7 +311,21 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
     session.add(evidence)
     session.commit()
     session.refresh(evidence)
+    # the chunk set just changed — drop the semantic-search matrix cache so the
+    # next query rebuilds (a reindex can reuse rowids and fool its signature)
+    search_index.invalidate()
     log_event(session, "evidence_indexed", evidence_id=evidence.id, chunks=len(chunks))
+
+    # standing queries: flag key names/phones in this fresh material.
+    # best-effort — a watchlist bug must never fail the indexing itself.
+    try:
+        from app.services.watchlist_service import scan_evidence
+
+        scan_evidence(session, evidence.id)
+    except Exception:
+        logger.exception("watchlist scan failed for evidence %s", evidence.id)
+        session.rollback()
+
     return evidence
 
 
@@ -168,38 +336,216 @@ def import_file(session: Session, source_path: str, case_id: int | None = None) 
     return index_evidence(session, evidence.id)
 
 
+# one resume loop per process: it is started from three places (startup thread,
+# /admin/reindex-all, /admin/reindex-pending) and the models are process-global
+# and not safe under concurrent inference
+_RESUME_LOCK = threading.Lock()
+
+
+def _processing_priority():
+    """SQL ordering that works the high-value material off the queue first:
+    text/chats/UFDR (instant) → AUDIO (voice notes & calls) → images (OCR) →
+    video. Audio outranks images deliberately: on a phone dump the WhatsApp voice
+    notes and call recordings are the evidence the case turns on, and a dump can
+    hold ~90k images (stickers, thumbnails, downloads) that would otherwise OCR
+    for days AHEAD of the first voice note. Images are individually faster than
+    transcription, but throughput is not the goal here — getting the spoken
+    evidence transcribed first is.
+
+    Within a tier, SMALLEST first (size is a proxy for duration): 99% of a phone
+    dump's audio is short WhatsApp voice notes (tiny opus) and the rest is a
+    handful of long call recordings (large WAV) that each take HOURS to
+    transcribe in full on the weak GPU. Shortest-first drains the thousands of
+    quick notes before the queue spends hours per long call, so the bulk of the
+    case becomes searchable fast and no single long call blocks it. The long
+    calls still transcribe fully (see the generous TRANSCRIBE_MAX_REALTIME), just
+    last. ponytail: size_bytes proxies duration well enough given the opus-note
+    vs WAV-call split; exact per-tier order among the long files doesn't matter."""
+    from sqlalchemy import case
+
+    from app.services.text_service import IMAGE_EXTENSIONS
+    from app.services.transcription_service import AUDIO_EXTENSIONS, VIDEO_EXTENSIONS
+
+    fname = func.lower(Evidence.filename)
+    tier = case(
+        (_suffix_in(fname, VIDEO_EXTENSIONS), 4),
+        (_suffix_in(fname, IMAGE_EXTENSIONS), 3),
+        (_suffix_in(fname, AUDIO_EXTENSIONS), 2),  # voice notes/calls before images
+        else_=1,  # text, chat, xml, csv, ufdr, pdf, office docs
+    )
+    order = [tier, Evidence.size_bytes, Evidence.id]
+
+    # Operator triage: pull evidence whose SOURCE PATH contains any substring in
+    # CASEMIND_PRIORITY_PATH_SUBSTR (|-separated) to the very front, ahead of the
+    # tiering above. Lets an investigator's curated folder ("relevant calls")
+    # transcribe first out of a 100k-file dump without reordering anything else.
+    # Unset (default) = no change. Reversible: clear the env and restart.
+    markers = [s for s in os.getenv("CASEMIND_PRIORITY_PATH_SUBSTR", "").split("|") if s]
+    if markers:
+        cond = Evidence.original_path.contains(markers[0])
+        for m in markers[1:]:
+            cond = cond | Evidence.original_path.contains(m)
+        order.insert(0, case((cond, 0), else_=1))
+    return tuple(order)
+
+
+def _suffix_in(fname_col, extensions):
+    from sqlalchemy import or_
+
+    return or_(*[fname_col.like(f"%{ext}") for ext in extensions])
+
+
 def resume_pending_indexing() -> int:
-    """Re-index every evidence stuck in 'processing'. Background indexing runs
-    as one task per folder-import; if the process restarts or the task dies
-    mid-batch, those items are orphaned forever. Called on startup (in a
-    thread) and by the admin endpoint. Runs sequentially — the models are
-    process-global and not safe under concurrent inference. Returns the count
-    processed."""
+    """Index every evidence in 'processing' until none remain. Covers both
+    items orphaned by a crash/restart and items freshly marked by reindex-all.
+    Fetches the next item each iteration (not a snapshot), so work queued while
+    the loop runs is picked up instead of waiting for the next restart. If a
+    loop is already running, returns immediately — that loop will get to the
+    new items. Returns the count processed by THIS call."""
     import logging
 
     from app.db import get_engine
+    from app.services import background_control
 
     logger = logging.getLogger("app.resume")
-    with Session(get_engine()) as session:
-        pending = list(session.exec(select(Evidence.id).where(Evidence.status == "processing")).all())
-    if not pending:
+    if not _RESUME_LOCK.acquire(blocking=False):
+        logger.info("resume already running; the active loop will pick up new items")
         return 0
-    logger.warning("resuming %d evidence stuck in 'processing'", len(pending))
+
+    import errno
+    import shutil
+    import time
+
+    from sqlalchemy.exc import OperationalError
+
+    from app.core.settings import get_settings
+
+    _DISK_MIN_FREE = 2**30  # 1 GB: below this a drive is "full" — pause, don't thrash
+    # The DB and the evidence store can sit on DIFFERENT drives (e.g. DB on F:,
+    # media on D:). A SQLite "disk I/O error" means the DB drive is full; an
+    # ENOSPC on a WAV/extract write means the store drive is full. Watch BOTH.
+    _settings = get_settings()
+    _store_dir = _settings.evidence_store_dir
+    _db_dir = Path(_settings.database_url.replace("sqlite:///", "", 1)).parent
+
+    def _min_free_bytes() -> int | None:
+        """Least free space across the store and DB drives; None if neither
+        can be stat'd (both drives gone — a dropout, not a full disk)."""
+        frees = []
+        for path in (_store_dir, _db_dir):
+            try:
+                frees.append(shutil.disk_usage(path).free)
+            except OSError:
+                pass
+        return min(frees) if frees else None
 
     done = 0
-    with Session(get_engine()) as session:
-        for evidence_id in pending:
+    attempted: set[int] = set()  # never retry an id within one run — no spin on a row that can't be marked failed
+    io_failures = 0
+
+    # 'transcription_unavailable' means _load_whisper() returned None — almost
+    # always transient (a GPU/driver blip, or the code drive dropping so the model
+    # can't load). Those files were marked terminal and never retried, stranding
+    # real audio (on this case 692 items, 56 of them priority recordings). Requeue
+    # them once at the top of a resume: by now the model loads again; if it truly
+    # can't, they simply re-mark and wait for the next restart. ponytail: blanket
+    # requeue — a permanently dead Whisper is a whole-system failure the user sees.
+    try:
+        with Session(get_engine()) as _s:
+            stranded = _s.exec(
+                select(Evidence).where(Evidence.status == "transcription_unavailable")
+            ).all()
+            for _ev in stranded:
+                _ev.status = "processing"
+                _s.add(_ev)
+            if stranded:
+                _s.commit()
+                logger.info("requeued %d transcription_unavailable item(s) for retry", len(stranded))
+    except Exception:
+        logger.exception("could not requeue transcription_unavailable items")
+
+    try:
+        # The evidence DB lives on a drive that drops out intermittently; a single
+        # disk I/O error here used to kill this loop silently and the whole queue
+        # (tens of thousands of items) sat idle until the next restart. On
+        # OperationalError: reconnect and resume; give up only if the drive stays
+        # gone for 20 straight attempts (~5 minutes).
+        while True:
             try:
-                index_evidence(session, evidence_id)
-                done += 1
-            except Exception:
-                logger.exception("resume-index failed for evidence %s", evidence_id)
-                ev = session.get(Evidence, evidence_id)
-                if ev is not None:
-                    ev.status = "text_extraction_failed"
-                    session.add(ev)
-                    session.commit()
-    logger.warning("resume complete: %d/%d indexed", done, len(pending))
+                with Session(get_engine()) as session:
+                    while True:
+                        background_control.wait_while_paused()  # user paused background work
+                        query = select(Evidence.id).where(Evidence.status == "processing")
+                        if attempted:
+                            query = query.where(Evidence.id.not_in(attempted))
+                        # fast/high-value types first, oldest within a tier
+                        evidence_id = session.exec(
+                            query.order_by(*_processing_priority()).limit(1)
+                        ).first()
+                        if evidence_id is None:
+                            break
+                        attempted.add(evidence_id)
+                        try:
+                            index_evidence(session, evidence_id)
+                            done += 1
+                            io_failures = 0
+                            # index_evidence always sets a terminal status, so a
+                            # done row no longer matches status=='processing'.
+                            # Drop it from `attempted` so that set — and the
+                            # NOT IN it feeds the next query — stays bounded to
+                            # genuinely-stuck rows, instead of growing to the whole
+                            # queue (200k+) and slowing every fetch toward SQLite's
+                            # variable limit.
+                            attempted.discard(evidence_id)
+                        except OperationalError:
+                            # a drive dropout, not a bad row — retry it after reconnect
+                            attempted.discard(evidence_id)
+                            raise
+                        except Exception as exc:
+                            # A full disk is not a bad file: don't mark it failed
+                            # (the row would need reprocessing once space frees).
+                            # Bubble it up so the outer handler pauses.
+                            if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
+                                attempted.discard(evidence_id)
+                                raise
+                            logger.exception("resume-index failed for evidence %s", evidence_id)
+                            session.rollback()
+                            ev = session.get(Evidence, evidence_id)
+                            if ev is not None:
+                                ev.status = "text_extraction_failed"
+                                session.add(ev)
+                                session.commit()
+                break  # queue drained
+            except (OperationalError, OSError) as exc:
+                if isinstance(exc, OSError) and exc.errno != errno.ENOSPC:
+                    raise  # an unrelated OS error — don't swallow it
+                # Disk problem. A full drive still answers disk_usage; a vanished
+                # one raises. Full → retrying can't help until the user frees
+                # space, so pause here (thread stays alive, no watchdog restart-
+                # thrash) and auto-resume when space returns. Dropout → the
+                # existing reconnect-and-eventually-give-up path.
+                free = _min_free_bytes()
+                if free is not None and free < _DISK_MIN_FREE:
+                    logger.error("resume: disk full (%.1f GB free); pausing until space is freed",
+                                 free / 2**30)
+                    while True:
+                        time.sleep(30)
+                        recovered = _min_free_bytes()
+                        if recovered is None or recovered >= _DISK_MIN_FREE:
+                            break  # space back, or both drives vanished (dropout path)
+                    io_failures = 0
+                    logger.info("resume: disk space recovered; resuming indexing")
+                    continue
+                io_failures += 1
+                if io_failures > 20:
+                    logger.error("resume: giving up after %d consecutive disk I/O failures", io_failures)
+                    raise
+                logger.warning("resume: disk I/O error (%d), reconnecting in 15s", io_failures)
+                time.sleep(15)
+    finally:
+        _RESUME_LOCK.release()
+    if attempted:
+        logger.warning("resume complete: %d/%d indexed", done, len(attempted))
     return done
 
 
@@ -219,6 +565,7 @@ def delete_evidence_record(session: Session, evidence: Evidence) -> None:
     stored = Path(evidence.stored_path)
     session.delete(evidence)
     session.commit()
+    search_index.invalidate()  # chunks removed — force the search matrix to rebuild
 
     if stored.exists():
         try:

@@ -1,20 +1,74 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from sqlmodel import Session, select
 
 from app.models.evidence import Evidence, EvidenceChunk
-from app.services.embedding_service import (
-    cosine_similarity,
-    deserialize_embedding,
-    embed_text,
-    embedding_model_name,
-)
+from app.services import search_index
+from app.services.embedding_service import embed_text, embedding_model_name
 from app.services.scope import case_evidence_ids
 
 
 logger = logging.getLogger(__name__)
+
+# A phone number, ID or plate is an exact string, not a meaning. Embeddings
+# cannot match one: they return the nearest vectors no matter how far away, so
+# searching 0524657474 produced ten confident-looking hits at ~0.82 for a number
+# that is not in the evidence at all. In an evidence tool that is not a poor
+# result, it is a false one — an investigator could conclude the number appears
+# in the material. Identifier queries are matched literally instead.
+IDENTIFIER_RE = re.compile(r"^[\d\s\-+()]{6,}$")
+
+
+def _digits(value: str) -> str:
+    return "".join(ch for ch in value if ch.isdigit())
+
+
+def _exact_identifier_search(
+    session: Session, query: str, limit: int, allowed: set[int] | None
+) -> list[dict]:
+    """Literal match on the digits, so 052-465-7474 and 0524657474 are the same
+    number. Returns only real occurrences — an empty list means it is not there."""
+    needle = _digits(query)
+    evidence_cache: dict[int, Evidence | None] = {}
+    results: list[dict] = []
+
+    # Stream evidence_id/index/location/text only — NOT the embedding column (a
+    # ~3.6KB string per chunk this path never uses). Loading whole EvidenceChunk
+    # rows turned a phone-number lookup into a 160MB+ table slurp that grows with
+    # the case (embeddings are ~4x the text). ponytail: still an O(n) digit scan;
+    # add a normalized-digits column or FTS if it drags past a few hundred k chunks.
+    stmt = select(
+        EvidenceChunk.evidence_id,
+        EvidenceChunk.chunk_index,
+        EvidenceChunk.source_location,
+        EvidenceChunk.text,
+    )
+    for ev_id, chunk_index, source_location, text in session.exec(stmt):
+        if allowed is not None and ev_id not in allowed:
+            continue
+        text = text or ""
+        if needle not in _digits(text):
+            continue
+        if ev_id not in evidence_cache:
+            evidence_cache[ev_id] = session.get(Evidence, ev_id)
+        evidence = evidence_cache[ev_id]
+        results.append(
+            {
+                "evidence_id": ev_id,
+                "filename": evidence.filename if evidence else None,
+                "chunk_index": chunk_index,
+                "source_location": source_location,
+                "score": 1.0,  # an exact match is exact; no similarity to report
+                "text": text,
+                "match": "exact",
+            }
+        )
+        if len(results) >= limit:
+            break
+    return results
 
 
 def semantic_search(
@@ -25,6 +79,11 @@ def semantic_search(
     if not query:
         return []
 
+    if IDENTIFIER_RE.match(query) and len(_digits(query)) >= 6:
+        return _exact_identifier_search(
+            session, query, limit, case_evidence_ids(session, case_id)
+        )
+
     query_embedding = embed_text(query, kind="query")
 
     if not query_embedding:
@@ -32,57 +91,37 @@ def semantic_search(
 
     allowed = case_evidence_ids(session, case_id)
     current_model = embedding_model_name()
-    chunks = session.exec(select(EvidenceChunk)).all()
+
+    # the cached NumPy index scores every chunk in one matrix-vector product and
+    # returns only the top-k ids; we then fetch text + filename for just those.
+    # (The old path deserialized every embedding string on every query.)
+    hits = search_index.search(session, query_embedding, current_model, allowed, limit)
+    if not hits:
+        return []
+
+    chunk_texts = {
+        c.id: c.text
+        for c in session.exec(
+            select(EvidenceChunk).where(
+                EvidenceChunk.id.in_([h["chunk_id"] for h in hits])
+            )
+        ).all()
+    }
     evidence_cache: dict[int, Evidence | None] = {}
     results: list[dict] = []
-
-    for chunk in chunks:
-        if allowed is not None and chunk.evidence_id not in allowed:
-            continue
-
-        # same dimension does not mean same vector space (MiniLM and e5 are
-        # both 384-d) - compare by recorded model and require a reindex
-        if chunk.embedding_model and chunk.embedding_model != current_model:
-            logger.warning(
-                "Skipping chunk embedded with a different model "
-                "(chunk_id=%s model=%s current=%s) - reindex the evidence",
-                chunk.id, chunk.embedding_model, current_model,
-            )
-            continue
-
-        chunk_embedding = deserialize_embedding(chunk.embedding or "")
-
-        if len(chunk_embedding) != len(query_embedding):
-            logger.warning(
-                "Skipping chunk with embedding dimension mismatch: "
-                "chunk_id=%s evidence_id=%s query_dim=%s chunk_dim=%s",
-                chunk.id,
-                chunk.evidence_id,
-                len(query_embedding),
-                len(chunk_embedding),
-            )
-            continue
-
-        score = cosine_similarity(query_embedding, chunk_embedding)
-
-        if score <= 0:
-            continue
-
-        if chunk.evidence_id not in evidence_cache:
-            evidence_cache[chunk.evidence_id] = session.get(Evidence, chunk.evidence_id)
-
-        evidence = evidence_cache[chunk.evidence_id]
-
+    for hit in hits:
+        ev_id = hit["evidence_id"]
+        if ev_id not in evidence_cache:
+            evidence_cache[ev_id] = session.get(Evidence, ev_id)
+        evidence = evidence_cache[ev_id]
         results.append(
             {
-                "evidence_id": chunk.evidence_id,
+                "evidence_id": ev_id,
                 "filename": evidence.filename if evidence else None,
-                "chunk_index": chunk.chunk_index,
-                "source_location": chunk.source_location,
-                "score": round(float(score), 6),
-                "text": chunk.text,
+                "chunk_index": hit["chunk_index"],
+                "source_location": hit["source_location"],
+                "score": hit["score"],
+                "text": chunk_texts.get(hit["chunk_id"]),
             }
         )
-
-    results.sort(key=lambda item: item["score"], reverse=True)
-    return results[:limit]
+    return results

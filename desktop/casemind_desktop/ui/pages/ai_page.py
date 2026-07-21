@@ -61,10 +61,16 @@ class AIPage(QWidget):
         splitter.addWidget(citations_panel)
         splitter.setSizes([300, 300])
 
+        disclaimer = QLabel("ה-AI זמין לציטוטים בלבד — כל תשובה מבוססת אך ורק על ראיות מהתיק, עם הפניה מדויקת למקור")
+        disclaimer.setStyleSheet("color: #9CA3AF; font-size: 11px;")
+        disclaimer.setAlignment(Qt.AlignCenter)
+        disclaimer.setWordWrap(True)
+
         layout = QVBoxLayout()
         layout.addWidget(self.question_input)
         layout.addLayout(top_bar)
         layout.addWidget(splitter)
+        layout.addWidget(disclaimer)
         self.setLayout(layout)
 
     def ask(self) -> None:

@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from app.core.security import require_api_key
 from app.core.settings import get_settings
 from app.db import init_db
-from app.api import health, evidence, search, audit, entities, timeline, contradictions, ai, cases, reports, admin, persons, status
+from app.api import health, evidence, search, audit, entities, timeline, contradictions, ai, cases, reports, admin, persons, status, translate, insights, watchlist, stories
 
 
 def _setup_file_logging() -> None:
@@ -56,12 +56,31 @@ async def lifespan(app: FastAPI):
 
     from app.services.embedding_service import embed_text
     from app.services.evidence_service import resume_pending_indexing
+    from app.services import translation_worker
 
     threading.Thread(target=lambda: embed_text("warmup", kind="query"), daemon=True).start()
-    threading.Thread(target=resume_pending_indexing, daemon=True).start()
+    # Gated like CASEMIND_BACKGROUND_TRANSLATE: the tests disable it because these
+    # daemon threads outlive their TestClient, hold _RESUME_LOCK across test
+    # boundaries, and race assertions (tests drive resume_pending_indexing() directly).
+    if os.getenv("CASEMIND_BACKGROUND_RESUME", "1") != "0":
+        threading.Thread(target=resume_pending_indexing, daemon=True).start()
+    # keeps translating foreign evidence for as long as the backend runs, so the
+    # material is ready before the user opens it (a chat export takes ~an hour)
+    translation_worker.start()
     yield
 
 app = FastAPI(title="CaseMind Defense API", version="0.15-alpha", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def _track_user_activity(request: Request, call_next):
+    # while someone is using the app, the background translator stands down —
+    # otherwise their question queues behind hours of batch work
+    if request.url.path not in ("/status", "/health"):
+        from app.services import llm_service
+
+        llm_service.note_user_activity()
+    return await call_next(request)
 
 
 @app.exception_handler(Exception)
@@ -91,3 +110,7 @@ app.include_router(reports.router, dependencies=protected)
 app.include_router(admin.router, dependencies=protected)
 app.include_router(persons.router, dependencies=protected)
 app.include_router(status.router, dependencies=protected)
+app.include_router(translate.router, dependencies=protected)
+app.include_router(insights.router, dependencies=protected)
+app.include_router(watchlist.router, dependencies=protected)
+app.include_router(stories.router, dependencies=protected)

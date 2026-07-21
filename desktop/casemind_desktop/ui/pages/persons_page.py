@@ -100,6 +100,15 @@ class PersonsPage(QWidget):
         self.new_ext_button = QPushButton("New (not in evidence)")
         self.suggest_button = QPushButton("🔍 Suggest phone links")
         self.suggest_alias_button = QPushButton("🔍 Suggest nicknames")
+        self.resolve_button = QPushButton("🧩 אחד זהויות (AI)")
+        self.resolve_button.setToolTip(
+            "מזהה שאותו אדם מופיע בכמה שפות/כתיבים (רינה/Рина/Риночка) ומאחד אותם לישות אחת"
+        )
+        self.relations_button = QPushButton("🤖 הצע קשרים (AI)")
+        self.relations_button.setToolTip(
+            "המודל קורא קטעים שבהם שני אנשים מוזכרים יחד ומציע מה הקשר ביניהם"
+        )
+        self.translate_button = QPushButton("🇮🇱 עברית לשמות")
         self.delete_button = QPushButton("Delete Person")
         self.delete_button.setStyleSheet("QPushButton { background: #b91c1c; }")
         self.refresh_button = QPushButton("Refresh")
@@ -107,6 +116,9 @@ class PersonsPage(QWidget):
         self.new_ext_button.clicked.connect(lambda: self._create_person(False))
         self.suggest_button.clicked.connect(self._suggest_phones)
         self.suggest_alias_button.clicked.connect(self._suggest_aliases)
+        self.resolve_button.clicked.connect(self._resolve_identities)
+        self.relations_button.clicked.connect(self._suggest_relations)
+        self.translate_button.clicked.connect(self._translate_names)
         self.delete_button.clicked.connect(self._delete_person)
         self.refresh_button.clicked.connect(self.refresh)
 
@@ -117,6 +129,9 @@ class PersonsPage(QWidget):
         top.addWidget(self.new_ext_button)
         top.addWidget(self.suggest_button)
         top.addWidget(self.suggest_alias_button)
+        top.addWidget(self.resolve_button)
+        top.addWidget(self.relations_button)
+        top.addWidget(self.translate_button)
         top.addWidget(self.delete_button)
         top.addWidget(self.refresh_button)
 
@@ -190,7 +205,8 @@ class PersonsPage(QWidget):
         self.person_list.clear()
         for p in persons:
             tag = "" if p["in_evidence"] else "  ⟨לא בחומרים⟩"
-            item = QListWidgetItem(f"{p['name']}{tag}")
+            he = f"  ({p['name_he']})" if p.get("name_he") else ""
+            item = QListWidgetItem(f"{p['name']}{he}{tag}")
             self.person_list.addItem(item)
         self.detail.clear()
         self._selected = None
@@ -215,7 +231,10 @@ class PersonsPage(QWidget):
         p = self._selected
         if not p:
             return
-        lines = [f"שם: {p['name']}"]
+        name_line = f"שם: {p['name']}"
+        if p.get("name_he"):
+            name_line += f"  ({p['name_he']})"
+        lines = [name_line]
         if not p["in_evidence"]:
             lines.append("(אדם שנוסף ידנית — לא מופיע בחומרי החקירה)")
         if p["description"]:
@@ -327,6 +346,116 @@ class PersonsPage(QWidget):
             on_done=self._on_updated, on_error=self._error,
         )
 
+    # --- entity resolution (AI) ---
+    def _resolve_identities(self) -> None:
+        if self.api.current_case_id is None:
+            QMessageBox.information(self, "בחר תיק", "בחר תיק ספציפי בדף Evidence תחילה.")
+            return
+        self.resolve_button.setEnabled(False)
+        run_async(
+            self.api.suggest_identities, self.api.current_case_id,
+            on_done=self._on_identity_suggestions, on_error=self._resolve_error,
+        )
+
+    def _on_identity_suggestions(self, suggestions: list[dict[str, Any]]) -> None:
+        self.resolve_button.setEnabled(True)
+        if not suggestions:
+            QMessageBox.information(
+                self, "אין הצעות",
+                "לא נמצאו שמות שנראים כאותו אדם בכתיבים או שפות שונים.",
+            )
+            return
+        merged = 0
+        for s in suggestions:
+            pct = int(s["confidence"] * 100)
+            forms = "\n".join(
+                f"  • {m['name']}  ({m['mentions']} אזכורים)" for m in s["members"]
+            )
+            box = QMessageBox(self)
+            box.setWindowTitle("איחוד זהויות")
+            box.setText(
+                f"השמות הבאים נראים כאותו אדם ({', '.join(s['reasons'])}, ביטחון {pct}%):\n\n"
+                f"{forms}\n\nלאחד אותם תחת '{s['canonical']}'?"
+            )
+            box.setStandardButtons(QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            box.button(QMessageBox.Yes).setText("אחד")
+            box.button(QMessageBox.No).setText("דלג")
+            box.button(QMessageBox.Cancel).setText("עצור")
+            answer = box.exec()
+            if answer == QMessageBox.Cancel:
+                break
+            if answer == QMessageBox.Yes:
+                aliases = [m["name"] for m in s["members"] if m["name"] != s["canonical"]]
+                try:
+                    self.api.resolve_identity(self.api.current_case_id, s["canonical"], aliases)
+                    merged += 1
+                except Exception as exc:  # keep walking the rest of the list
+                    QMessageBox.critical(self, "איחוד נכשל", str(exc))
+        if merged:
+            QMessageBox.information(self, "איחוד זהויות", f"אוחדו {merged} זהויות.")
+            self.refresh()
+
+    def _resolve_error(self, message: str) -> None:
+        self.resolve_button.setEnabled(True)
+        QMessageBox.critical(self, "איחוד זהויות", message)
+
+    # --- relation inference (AI) ---
+    def _suggest_relations(self) -> None:
+        if self.api.current_case_id is None:
+            QMessageBox.information(self, "בחר תיק", "בחר תיק ספציפי בדף Evidence תחילה.")
+            return
+        self.relations_button.setEnabled(False)
+        self.relations_button.setText("🤖 קורא את החומר…")
+        run_async(
+            self.api.suggest_relations, self.api.current_case_id,
+            on_done=self._on_relation_suggestions, on_error=self._relations_error,
+        )
+
+    def _on_relation_suggestions(self, suggestions: list[dict[str, Any]]) -> None:
+        self.relations_button.setEnabled(True)
+        self.relations_button.setText("🤖 הצע קשרים (AI)")
+        if not suggestions:
+            QMessageBox.information(
+                self, "אין הצעות",
+                "המודל לא זיהה קשרים חדשים בין אנשים מתוך הקטעים המשותפים\n"
+                "(או שאין מודל שפה זמין כרגע).",
+            )
+            return
+        added = 0
+        for s in suggestions:
+            box = QMessageBox(self)
+            box.setWindowTitle("הצעת קשר (AI)")
+            box.setText(
+                f"'{s['person_a']}' ↔ '{s['person_b']}'\n\n"
+                f"קשר מוצע: {s['relation']}\n"
+                f"נימוק: {s.get('rationale', '')}\n\n"
+                "ההצעה נקראה מקטעי הראיות שבהם השניים מוזכרים יחד.\nלשמור את הקשר?"
+            )
+            box.setStandardButtons(QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
+            box.button(QMessageBox.Yes).setText("שמור")
+            box.button(QMessageBox.No).setText("דלג")
+            box.button(QMessageBox.Cancel).setText("עצור")
+            answer = box.exec()
+            if answer == QMessageBox.Cancel:
+                break
+            if answer == QMessageBox.Yes:
+                try:
+                    self.api.add_person_link(
+                        s["person_a_id"], "relation", s["relation"],
+                        related_person_id=s["person_b_id"],
+                    )
+                    added += 1
+                except Exception as exc:
+                    QMessageBox.critical(self, "שמירה נכשלה", str(exc))
+        if added:
+            QMessageBox.information(self, "קשרים", f"נשמרו {added} קשרים.")
+            self.refresh()
+
+    def _relations_error(self, message: str) -> None:
+        self.relations_button.setEnabled(True)
+        self.relations_button.setText("🤖 הצע קשרים (AI)")
+        QMessageBox.critical(self, "הצעת קשרים", message)
+
     def _suggest_aliases(self) -> None:
         if self.api.current_case_id is None:
             QMessageBox.information(self, "בחר תיק", "בחר תיק ספציפי בדף Evidence תחילה.")
@@ -339,10 +468,15 @@ class PersonsPage(QWidget):
 
     def _on_alias_suggestions(self, suggestions: list[dict[str, Any]]) -> None:
         self.suggest_alias_button.setEnabled(True)
+        # when a person is selected, only their nicknames — the user asked for
+        # nicknames of the highlighted person, not the whole case
+        if self._selected:
+            suggestions = [s for s in suggestions if s["person_id"] == self._selected["id"]]
         if not suggestions:
+            who = f" עבור '{self._selected['name']}'" if self._selected else ""
             QMessageBox.information(
                 self, "אין הצעות",
-                "לא נמצאו כינויים או שמות נוספים המתאימים לאנשים שבתיק.",
+                f"לא נמצאו כינויים או שמות נוספים{who}.",
             )
             return
         accepted = 0
@@ -373,6 +507,35 @@ class PersonsPage(QWidget):
 
     def _alias_error(self, message: str) -> None:
         self.suggest_alias_button.setEnabled(True)
+        QMessageBox.critical(self, "שגיאה", message)
+
+    def _translate_names(self) -> None:
+        if self.api.current_case_id is None:
+            QMessageBox.information(self, "בחר תיק", "בחר תיק ספציפי בדף Evidence תחילה.")
+            return
+        self.translate_button.setEnabled(False)
+        self.translate_button.setText("🇮🇱 מתרגם…")
+        run_async(
+            self.api.translate_person_names, self.api.current_case_id,
+            on_done=self._on_names_translated, on_error=self._translate_error,
+        )
+
+    def _on_names_translated(self, result: dict[str, Any]) -> None:
+        self.translate_button.setEnabled(True)
+        self.translate_button.setText("🇮🇱 עברית לשמות")
+        count = result.get("count", 0)
+        if count:
+            self.refresh()
+            QMessageBox.information(self, "סיום", f"נוספו שמות בעברית ל-{count} אנשים.")
+        else:
+            QMessageBox.information(
+                self, "אין מה לתרגם",
+                "לא נמצאו שמות ברוסית ללא צורה עברית (או שכולם כבר תורגמו).",
+            )
+
+    def _translate_error(self, message: str) -> None:
+        self.translate_button.setEnabled(True)
+        self.translate_button.setText("🇮🇱 עברית לשמות")
         QMessageBox.critical(self, "שגיאה", message)
 
     def _remove_link(self) -> None:

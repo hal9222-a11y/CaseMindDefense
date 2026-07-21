@@ -21,6 +21,7 @@ class ToolbarWidget(QWidget):
     new_case_clicked = Signal()
     delete_case_clicked = Signal()
     report_clicked = Signal()
+    folders_clicked = Signal()
     case_changed = Signal(object)  # int case id, or None for "All Cases"
 
     def __init__(self) -> None:
@@ -46,6 +47,8 @@ class ToolbarWidget(QWidget):
         )
         self.delete_case_button.setEnabled(False)  # only when a real case is selected
         self.report_button = QPushButton("Report")
+        self.folders_button = QPushButton("ספריות מקור")
+        self.folders_button.setToolTip("אילו ספריות בדיסק משויכות לתיק הנוכחי")
         self.case_selector = QComboBox()
         self.case_selector.setMinimumWidth(180)
 
@@ -56,6 +59,7 @@ class ToolbarWidget(QWidget):
         self.new_case_button.clicked.connect(self.new_case_clicked)
         self.delete_case_button.clicked.connect(self.delete_case_clicked)
         self.report_button.clicked.connect(self.report_clicked)
+        self.folders_button.clicked.connect(self.folders_clicked)
         self.case_selector.currentIndexChanged.connect(self._on_case_changed)
 
         layout = QHBoxLayout()
@@ -70,6 +74,7 @@ class ToolbarWidget(QWidget):
         layout.addWidget(self.import_folder_button)
         layout.addWidget(self.delete_button)
         layout.addWidget(self.report_button)
+        layout.addWidget(self.folders_button)
         layout.addStretch()
         self.setLayout(layout)
 

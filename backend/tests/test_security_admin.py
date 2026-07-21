@@ -74,3 +74,51 @@ def test_backup_creates_zip_with_db_and_store(tmp_path):
         assert "casemind_defense.db" in names
         assert any(n.startswith("evidence_store/") for n in names)
         assert result["evidence_files"] >= 1
+
+
+def test_import_roots_always_allow_the_evidence_store(tmp_path, monkeypatch):
+    """The UFDR media extractor stages temp files inside the evidence store
+    before registering them. An import allowlist that doesn't mention the store
+    used to break extraction entirely — the store is our own custody area and
+    must always be an allowed source."""
+    import uuid as _uuid
+
+    from app.core.settings import get_settings
+    from app.services.evidence_service import _check_import_allowed, ImportPathNotAllowedError
+
+    monkeypatch.setenv("CASEMIND_IMPORT_ROOTS", str(tmp_path / "some_allowed_root"))
+
+    store_file = get_settings().evidence_store_dir / f"staged_{_uuid.uuid4().hex}.opus"
+    store_file.parent.mkdir(parents=True, exist_ok=True)
+    store_file.write_bytes(b"x" * 10)
+    _check_import_allowed(store_file)  # must NOT raise
+
+    outside = tmp_path / f"outside_{_uuid.uuid4().hex}.txt"
+    outside.write_text("nope", encoding="utf-8")
+    try:
+        _check_import_allowed(outside)
+        raise AssertionError("outside path must be rejected")
+    except ImportPathNotAllowedError:
+        pass
+    store_file.unlink()
+
+
+def test_database_redirect_refuses_missing_target(tmp_path, monkeypatch):
+    """A stale/unplugged database.path must fail LOUDLY: silently connecting
+    would create a fresh empty DB and the whole case would look wiped."""
+    import pytest
+
+    from app.core.settings import _database_url
+
+    monkeypatch.delenv("CASEMIND_DATABASE_URL", raising=False)
+    redirect = tmp_path / "database.path"
+    redirect.write_text(str(tmp_path / "no_such_dir" / "gone.db"), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="no file exists"):
+        _database_url(redirect=redirect)
+
+    # and a redirect whose target DOES exist resolves to it
+    db = tmp_path / "real.db"
+    db.write_bytes(b"")
+    redirect.write_text(str(db), encoding="utf-8")
+    assert _database_url(redirect=redirect) == f"sqlite:///{db.resolve().as_posix()}"

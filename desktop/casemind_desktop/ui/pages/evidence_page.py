@@ -53,6 +53,7 @@ class EvidencePage(QWidget):
         self.toolbar.new_case_clicked.connect(self._create_case)
         self.toolbar.delete_case_clicked.connect(self._delete_case)
         self.toolbar.report_clicked.connect(self._generate_report)
+        self.toolbar.folders_clicked.connect(self._show_source_folders)
         self.toolbar.case_changed.connect(self._on_case_changed)
 
         self._pending_highlight: str | None = None
@@ -119,6 +120,7 @@ class EvidencePage(QWidget):
         self.toolbar.set_busy(True)  # stays busy through the refresh
         self._refresh()
         errors = result.get("errors") or []
+        skipped = result.get("skipped_unsupported", 0)
         message = (
             f"נסרקו: {result.get('scanned', 0)} קבצים\n"
             f"נקלטו: {result.get('registered', 0)}\n"
@@ -126,11 +128,55 @@ class EvidencePage(QWidget):
             f"שגיאות: {len(errors)}\n\n"
             "העיבוד (OCR / תמלול / אינדוקס) רץ ברקע — Refresh יראה התקדמות."
         )
+        # a file that was not imported is evidence that is not in the case; the
+        # user has to be told, not left to assume everything came in. Types we
+        # KNOW carry no evidence get labeled so 372 DVD-menu files don't read
+        # like 372 missed wiretaps (inspected real samples of each):
+        known_non_evidence = {
+            ".end": "קובץ סימון של מערכת הייצוא (ללא תוכן)",
+            ".ifo": "תפריט DVD — התוכן עצמו הוא קבצי ה-VOB שנקלטים",
+            ".bup": "עותק גיבוי של תפריט DVD",
+            ".ini": "הגדרות תצוגת תיקייה של Windows",
+            ".lnk": "קיצור דרך של Windows",
+        }
+        if skipped:
+            by_type = result.get("skipped_by_type") or {}
+            lines, unknown = [], 0
+            for ext, n in sorted(by_type.items(), key=lambda kv: -kv[1])[:8]:
+                label = known_non_evidence.get(ext)
+                lines.append(f"{ext} ×{n}" + (f" — {label}" if label else ""))
+                if not label:
+                    unknown += n
+            message += f"\n\n⚠️ {skipped} קבצים לא נקלטו — סוג קובץ לא נתמך:\n" + "\n".join(lines)
+            message += (
+                "\nבדוק אם הסוגים ללא תיאור רלוונטיים לחקירה."
+                if unknown else
+                "\nכל הסוגים שדולגו הם קבצי מערכת ללא תוכן ראייתי."
+            )
         if errors:
             message += "\n\nשגיאות ראשונות:\n" + "\n".join(
                 f"- {e.get('path', '')}: {e.get('error', '')}" for e in errors[:5]
             )
         QMessageBox.information(self, "Folder Import", message)
+
+    def _show_source_folders(self) -> None:
+        case_name = self.toolbar.case_selector.currentText()
+        run_async(
+            self.api.source_folders,
+            self.toolbar.current_case_id(),
+            on_done=lambda rows: self._on_source_folders(case_name, rows),
+            on_error=lambda err: QMessageBox.critical(self, "ספריות מקור", err),
+        )
+
+    def _on_source_folders(self, case_name: str, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            QMessageBox.information(self, "ספריות מקור", "אין עדיין ראיות בתיק הזה.")
+            return
+        lines = [f"{r['folder']}  —  {r['count']} קבצים" for r in rows]
+        QMessageBox.information(
+            self, "ספריות מקור",
+            f"הראיות בתיק \"{case_name}\" נקלטו מהספריות:\n\n" + "\n".join(lines),
+        )
 
     def _generate_report(self) -> None:
         run_async(

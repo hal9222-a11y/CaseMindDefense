@@ -2,28 +2,188 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
+import time
 from functools import lru_cache
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".ogg", ".flac"}
-VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov"}
+# .opus is how WhatsApp stores EVERY voice message. Leaving it out meant a
+# forensic export with 374 voice recordings imported none of them — and the
+# folder import said nothing. In a criminal case those recordings can be the
+# evidence. .amr/.3gp are what older phones and some call recorders produce.
+AUDIO_EXTENSIONS = {
+    ".wav", ".mp3", ".m4a", ".ogg", ".opus", ".flac",
+    ".aac", ".amr", ".3gp", ".3gpp", ".wma", ".webm", ".m4b",
+}
+VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov", ".3gp", ".webm", ".wmv", ".flv", ".vob", ".mpg", ".mpeg", ".m4v"}
 MEDIA_EXTENSIONS = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
 
 # "small" is multilingual (Hebrew/Russian/English) and CPU-viable.
 # Hebrew-tuned alternative: an ivrit.ai faster-whisper model name.
 WHISPER_MODEL = os.getenv("CASEMIND_WHISPER_MODEL", "small")
-WHISPER_DEVICE = os.getenv("CASEMIND_WHISPER_DEVICE", "cpu")
+# "auto" uses the NVIDIA GPU when present — measured 37x faster (a voice message
+# 26 min on CPU -> 42 s), which is the difference between a case's 374 voice
+# recordings taking a week and taking a night. Force with CASEMIND_WHISPER_DEVICE.
+WHISPER_DEVICE = os.getenv("CASEMIND_WHISPER_DEVICE", "auto")
 CHUNK_TARGET_CHARS = 1000
+
+# Silent-skip: this case holds ~14,500 videos, most of them short WhatsApp
+# clips. Many carry NO audio track at all (a GIF saved as .mp4, a muted clip);
+# running the full transcription pipeline on them wastes GPU time to produce
+# nothing. A header-only probe (no decode) skips those instantly. Files WITH an
+# audio track still go to Whisper, whose VAD already avoids inference on silence.
+SKIP_SILENT = os.getenv("CASEMIND_SKIP_SILENT", "1") != "0"
+# below this many seconds of audio there is no meaningful speech to find (a
+# sticker, a 0.2s notification). Conservative — a one-word "כן" is ~0.5s.
+MIN_AUDIO_SECONDS = float(os.getenv("CASEMIND_MIN_AUDIO_SECONDS", "0.4"))
+
+# The languages actually present in the case. Free auto-detect on a short/noisy
+# voice note lands on nonsense — real logs show 'be' (Belarusian) at 0.39, 'ml'
+# (Malayalam) at 0.19 for Hebrew/Russian clips — and then transcribes gibberish
+# under the wrong language model. Restricting the choice to these keeps it on the
+# languages the case actually contains. Empty value ("") restores free detection.
+ALLOWED_LANGS = [s.strip() for s in os.getenv("CASEMIND_WHISPER_LANGS", "he,ru,ar,en").split(",") if s.strip()]
+
+# Per-file wall-clock ceiling — a BACKSTOP against a genuinely stuck file, not a
+# throughput cap. On the weak T2000 a long CALL RECORDING legitimately transcribes
+# at 3-7x realtime (a 28-min call took 2-3h and finished in full), and those long
+# calls hold important evidence — so the budget must be generous enough that they
+# complete, never truncated. The queue runs short files first (see
+# _processing_priority), so a long call taking hours sits at the END and can't wedge
+# the 37k short notes behind it; that's what lets this ceiling be loose. Default 10x
+# clears the observed 3-7x with margin; only a file slower than 10x realtime (truly
+# pathological — condition_on_previous_text=False already stops the infinite-loop
+# case) is abandoned with its partial banked. Lower CASEMIND_TRANSCRIBE_MAX_REALTIME
+# only if you deliberately want partial-but-fast over complete transcripts.
+TRANSCRIBE_MAX_REALTIME = float(os.getenv("CASEMIND_TRANSCRIBE_MAX_REALTIME", "10.0"))
+TRANSCRIBE_MIN_BUDGET_SEC = float(os.getenv("CASEMIND_TRANSCRIBE_MIN_BUDGET_SEC", "120"))
+
+# Hard-timeout escape hatch for the ONE case the in-process deadline can't catch:
+# a hang INSIDE a single Whisper segment (the GPU C call never returns to Python,
+# so the between-segment check in _drain_segments is never reached). Only a
+# separate process can be wall-clock KILLED mid-call. Gated to LARGE files (the
+# only ones that realistically run long enough to hang; the 100k tiny opus notes
+# never do) and OFF by default — enabling it changes the hot transcription path,
+# so validate on the GPU first. When on, a large file runs in a child process
+# that is killed at its 10x-realtime budget; the tiny majority stay in-process.
+TRANSCRIBE_SUBPROCESS = os.getenv("CASEMIND_TRANSCRIBE_SUBPROCESS", "0") != "0"
+TRANSCRIBE_SUBPROCESS_MIN_MB = float(os.getenv("CASEMIND_TRANSCRIBE_SUBPROCESS_MIN_MB", "3"))
+
+
+def _probe_media(path: Path) -> tuple[bool, float]:
+    """(has_audio_stream, audio_seconds) from the container HEADER only — no
+    decode, so it is near-instant. (True, 0.0) when the file can't be probed,
+    so an unprobeable file is still handed to Whisper rather than dropped."""
+    try:
+        import av
+    except ImportError:  # pragma: no cover - av ships with faster-whisper
+        return (True, 0.0)
+    try:
+        with av.open(str(path)) as container:
+            audio_streams = [s for s in container.streams if s.type == "audio"]
+            if not audio_streams:
+                return (False, 0.0)
+            stream = audio_streams[0]
+            duration = 0.0
+            if stream.duration is not None and stream.time_base is not None:
+                duration = float(stream.duration * stream.time_base)
+            elif container.duration is not None:
+                duration = container.duration / av.time_base
+            return (True, duration)
+    except Exception:
+        return (True, 0.0)  # probe failed — do not skip on a guess
+
+
+def _silent_skip_reason(path: Path) -> str | None:
+    """Why to skip this file without transcribing, or None to transcribe it.
+    Header-only (no decode): catches files with no audio track or a trivially
+    short one. Most phone-clip videos DO carry an audio track, though — the
+    speech check in _decode_and_vad catches the silent-but-present ones."""
+    if not SKIP_SILENT:
+        return None
+    has_audio, duration = _probe_media(path)
+    if not has_audio:
+        return "no audio stream"
+    if 0 < duration < MIN_AUDIO_SECONDS:
+        return f"audio too short ({duration:.2f}s)"
+    return None
+
+
+def _decode_and_vad(path: Path):
+    """Decode the audio ONCE and run voice-activity detection on it.
+
+    Returns (audio_array, has_speech). A phone dump is full of clips whose
+    audio track is music or ambient noise with no speech — VAD skips those, and
+    when there IS speech we hand Whisper the SAME decoded array (vad_filter off)
+    so nothing is decoded or VAD'd twice. (None, True) on any failure, so a file
+    we can't pre-check still goes to Whisper the normal way rather than dropped."""
+    try:
+        from faster_whisper.audio import decode_audio
+        from faster_whisper.vad import VadOptions, get_speech_timestamps
+    except ImportError:  # pragma: no cover
+        return (None, True)
+    try:
+        audio = decode_audio(str(path), sampling_rate=16000)
+    except Exception as exc:
+        logger.warning("could not decode audio in %s: %s", path.name, exc)
+        return (None, True)
+    speech = get_speech_timestamps(audio, VadOptions())
+    return (audio, bool(speech))
+
+
+def _enable_cuda_dlls() -> None:
+    """faster-whisper's CUDA runtime (cuBLAS/cuDNN) ships as pip packages under
+    nvidia/*/bin. Those dirs must be on the DLL search path or loading the GPU
+    model fails with 'cublas64_12.dll not found'."""
+    import glob
+
+    base = os.path.join(os.path.dirname(__file__), "..", "..", ".venv",
+                        "Lib", "site-packages", "nvidia")
+    bins = sorted({os.path.dirname(p) for p in glob.glob(
+        os.path.join(base, "**", "*.dll"), recursive=True)})
+    for path in bins:
+        try:
+            os.add_dll_directory(path)
+        except (OSError, AttributeError):
+            pass
+    if bins:
+        os.environ["PATH"] = os.pathsep.join(bins) + os.pathsep + os.environ.get("PATH", "")
+
+
+def _try_load(device: str, compute_type: str):
+    from faster_whisper import WhisperModel
+
+    return WhisperModel(WHISPER_MODEL, device=device, compute_type=compute_type)
 
 
 @lru_cache(maxsize=1)
 def _load_whisper():
-    try:
-        from faster_whisper import WhisperModel
+    # GPU first (float16), CPU (int8) as the fallback — a machine without a
+    # usable GPU still transcribes, just slower.
+    want_gpu = WHISPER_DEVICE in ("auto", "cuda")
+    if want_gpu:
+        try:
+            import ctranslate2
 
-        return WhisperModel(WHISPER_MODEL, device=WHISPER_DEVICE, compute_type="int8")
+            if ctranslate2.get_cuda_device_count() > 0:
+                _enable_cuda_dlls()
+                model = _try_load("cuda", "float16")
+                logger.info("Whisper on GPU (cuda/float16)")
+                return model
+        except Exception as exc:
+            logger.warning("Whisper GPU load failed, falling back to CPU: %s", exc)
+
+    if WHISPER_DEVICE == "cuda":
+        # explicitly asked for GPU and it did not work — do not silently pretend
+        logger.warning("Whisper GPU requested but unavailable; media not transcribed")
+        return None
+
+    try:
+        model = _try_load("cpu", "int8")
+        logger.info("Whisper on CPU (int8)")
+        return model
     except Exception as exc:
         logger.warning("Whisper unavailable, media will not be transcribed: %s", exc)
         return None
@@ -34,17 +194,69 @@ def _fmt(seconds: float) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
+def _pick_language(model, audio) -> str | None:
+    """Restrict Whisper's language choice to the case's actual languages
+    (ALLOWED_LANGS). Detects over the audio, then returns the best-scoring
+    ALLOWED language so a noisy clip can't be transcribed as Belarusian/Malayalam.
+    Returns None (free auto-detect) when there is no decoded array to detect on,
+    the allow-list is disabled, or detection fails."""
+    if audio is None or not ALLOWED_LANGS:
+        return None
+    try:
+        # look at 2 windows, not just the first 30s — a clip can open with noise.
+        # Parsing is inside the guard too: a malformed return must degrade to
+        # auto-detect (None), never escape and fail the file.
+        _, _, all_probs = model.detect_language(audio, language_detection_segments=2)
+        allowed = [(lang, p) for lang, p in all_probs if lang in ALLOWED_LANGS]
+        return max(allowed, key=lambda lp: lp[1])[0] if allowed else None
+    except Exception as exc:  # detection is best-effort; fall back to auto
+        logger.warning("language detection failed, using auto-detect: %s", exc)
+        return None
+
+
 def transcribe_to_chunks(path: Path) -> list[dict] | None:
     """Transcribe audio (or a video's audio track) into chunk dicts with
     time-range citations: {'text', 'source_location': 'time:MM:SS-MM:SS'}.
 
     Returns None when Whisper is unavailable; [] when there is no speech."""
+    # cheap header probe BEFORE loading/decoding: drop no-audio and trivially
+    # short files (thousands of them in a phone dump) without spending GPU time
+    skip = _silent_skip_reason(path)
+    if skip is not None:
+        logger.info("skipping %s: %s", path.name, skip)
+        return []  # -> 'no_text_found', same as a silent transcription
+
     model = _load_whisper()
     if model is None:
         return None  # whisper not installed — a system-level issue
 
+    # decode + VAD once; skip files with no speech, reuse the array otherwise
+    source: object = str(path)
+    use_vad_filter = True
+    language: str | None = None  # None = Whisper auto-detects (no array to restrict on)
+    if SKIP_SILENT:
+        audio, has_speech = _decode_and_vad(path)
+        if audio is not None:
+            if not has_speech:
+                logger.info("skipping %s: no speech detected (VAD)", path.name)
+                return []
+            source = audio          # transcribe the array we already decoded
+            use_vad_filter = False  # and already VAD'd — do not repeat it
+            language = _pick_language(model, audio)  # keep it on the case's languages
+
     try:
-        segments, info = model.transcribe(str(path), vad_filter=True)
+        # condition_on_previous_text=False stops Whisper feeding its own output
+        # back as context. With it ON (the default), a low-quality / non-speech
+        # clip makes the model hallucinate a token, then loop on it forever -
+        # one 62-min file ground the GPU at 99% for 80+min producing nothing and
+        # wedged the whole queue. Off, each window is decoded independently, so a
+        # bad file finishes in bounded time.
+        # ponytail: a still-pathological file can only run long, not forever,
+        # upgrade to a subprocess+timeout wrapper if any file blows past ~10x realtime.
+        segments, info = model.transcribe(
+            source, language=language, vad_filter=use_vad_filter,
+            condition_on_previous_text=False,
+        )
     except Exception as exc:
         # this file couldn't be transcribed (e.g. a video with no audio
         # track raises IndexError inside faster-whisper). That's not a
@@ -55,6 +267,25 @@ def transcribe_to_chunks(path: Path) -> list[dict] | None:
 
     logger.info("transcribing %s (language=%s)", path.name, info.language)
 
+    audio_seconds = float(getattr(info, "duration", 0.0) or 0.0)
+    budget = max(TRANSCRIBE_MIN_BUDGET_SEC, audio_seconds * TRANSCRIBE_MAX_REALTIME)
+    chunks, truncated = _drain_segments(segments, time.monotonic() + budget)
+    if truncated:
+        logger.warning(
+            "transcription of %s exceeded its %.0fs budget (%.0fs audio); banked %d "
+            "partial chunk(s) and moved on so the queue is not wedged",
+            path.name, budget, audio_seconds, len(chunks),
+        )
+    return chunks
+
+
+def _drain_segments(segments, deadline: float, now=time.monotonic) -> tuple[list[dict], bool]:
+    """Consume Whisper's (lazy) segment generator into chunk dicts, stopping if
+    the wall clock passes `deadline`. Returns (chunks, truncated). The generator
+    is where the GPU actually works, so the deadline is checked between segments —
+    a pathological file that keeps emitting segments is abandoned in bounded time
+    with its partial transcription banked, rather than blocking the whole queue.
+    `now` is injectable so the timeout is unit-testable without real time."""
     chunks: list[dict] = []
     buffer: list[str] = []
     start_time: float | None = None
@@ -73,7 +304,11 @@ def transcribe_to_chunks(path: Path) -> list[dict] | None:
         buffer = []
         start_time = None
 
+    truncated = False
     for segment in segments:
+        if now() > deadline:
+            truncated = True
+            break
         if start_time is None:
             start_time = segment.start
         end_time = segment.end
@@ -82,4 +317,60 @@ def transcribe_to_chunks(path: Path) -> list[dict] | None:
             _flush()
     _flush()
 
-    return chunks
+    return chunks, truncated
+
+
+def transcribe_guarded(path: Path) -> list[dict] | None:
+    """What index_evidence should call. Same contract as transcribe_to_chunks
+    (None = Whisper unavailable, [] = no speech, [chunks] = transcript), but for
+    LARGE files — when CASEMIND_TRANSCRIBE_SUBPROCESS is on — runs the work in a
+    child process that can be hard-killed on a wall-clock timeout, so a hang
+    inside a single segment can't wedge the queue. Small files and the default-
+    off case go straight through the (unchanged) in-process path."""
+    if not TRANSCRIBE_SUBPROCESS:
+        return transcribe_to_chunks(path)
+    try:
+        big = path.stat().st_size >= TRANSCRIBE_SUBPROCESS_MIN_MB * 1024 ** 2
+    except OSError:
+        big = False
+    if not big:
+        return transcribe_to_chunks(path)
+    return _transcribe_subprocess(path)
+
+
+def _transcribe_subprocess(path: Path) -> list[dict] | None:
+    """Transcribe one large file in a child process, KILLED at its wall-clock
+    budget. Returns [] on a hard timeout (the file is abandoned so the queue
+    advances) and falls back in-process if the child can't be launched."""
+    import json
+    import subprocess
+    import tempfile
+
+    # a 4GB GPU cannot hold two Whisper models — drop THIS process's cached model
+    # so the child's load has room. The next small file reloads it (lru_cache).
+    _load_whisper.cache_clear()
+
+    _, duration = _probe_media(path)
+    budget = max(TRANSCRIBE_MIN_BUDGET_SEC, (duration or 0.0) * TRANSCRIBE_MAX_REALTIME) + 120
+    fd, out = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    try:
+        subprocess.run(
+            [sys.executable, "-m", "app.services._transcribe_worker", str(path), out],
+            timeout=budget, check=False,
+            cwd=str(Path(__file__).resolve().parents[2]),
+        )
+        return json.loads(Path(out).read_text(encoding="utf-8")).get("chunks")
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "hard-killed transcription of %s after %.0fs (hung inside a segment); "
+            "abandoned so the queue is not wedged", path.name, budget)
+        return []
+    except Exception as exc:  # worker crash / unreadable output — don't lose the file
+        logger.warning("subprocess transcription failed for %s (%s); retrying in-process", path.name, exc)
+        return transcribe_to_chunks(path)
+    finally:
+        try:
+            os.unlink(out)
+        except OSError:
+            pass

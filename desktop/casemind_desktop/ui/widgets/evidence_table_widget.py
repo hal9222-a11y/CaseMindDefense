@@ -25,26 +25,38 @@ class EvidenceTableWidget(QTableWidget):
         self.itemSelectionChanged.connect(self._on_selection_changed)
 
         header = self.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        # Interactive, NOT ResizeToContents: ResizeToContents rescans every row
+        # to recompute width on every setItem — O(rows²) — which froze the UI
+        # ("not responding") once a case had ~1500+ files. Filename stretches;
+        # the rest keep sensible default widths.
+        header.setSectionResizeMode(QHeaderView.Interactive)
         header.setSectionResizeMode(1, QHeaderView.Stretch)  # Filename fills the width
 
     def set_items(self, items: list[dict[str, Any]]) -> None:
         self._items = items
-        self.setRowCount(len(items))
-
-        for row, item in enumerate(items):
-            values = [
-                str(item.get("id", "")),
-                item.get("filename", ""),
-                (item.get("mime_type") or "").split("/")[-1],
-                self._human_size(item.get("size_bytes") or 0),
-                item.get("status", ""),
-                (item.get("imported_at") or "")[:16].replace("T", " "),
-            ]
-            for col, value in enumerate(values):
-                cell = QTableWidgetItem(value)
-                cell.setToolTip(value)
-                self.setItem(row, col, cell)
+        # batch the whole rebuild: no repaint/relayout per cell across thousands
+        # of rows
+        self.setUpdatesEnabled(False)
+        sorting = self.isSortingEnabled()
+        self.setSortingEnabled(False)
+        try:
+            self.setRowCount(len(items))
+            for row, item in enumerate(items):
+                values = [
+                    str(item.get("id", "")),
+                    item.get("filename", ""),
+                    (item.get("mime_type") or "").split("/")[-1],
+                    self._human_size(item.get("size_bytes") or 0),
+                    item.get("status", ""),
+                    (item.get("imported_at") or "")[:16].replace("T", " "),
+                ]
+                for col, value in enumerate(values):
+                    cell = QTableWidgetItem(value)
+                    cell.setToolTip(value)
+                    self.setItem(row, col, cell)
+        finally:
+            self.setSortingEnabled(sorting)
+            self.setUpdatesEnabled(True)
 
     def _on_selection_changed(self) -> None:
         row = self.currentRow()

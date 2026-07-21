@@ -3,8 +3,45 @@ import uuid
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services import evidence_service
-from app.services.transcription_service import _fmt
+from app.services import evidence_service, transcription_service
+from app.services.transcription_service import _fmt, _pick_language
+
+
+class _FakeModel:
+    """Stands in for WhisperModel.detect_language, returning canned probabilities."""
+    def __init__(self, probs):
+        self._probs = probs
+
+    def detect_language(self, audio, language_detection_segments=1):
+        top = max(self._probs, key=lambda lp: lp[1])
+        return top[0], top[1], self._probs
+
+
+def test_pick_language_restricts_to_case_langs(monkeypatch):
+    # free auto-detect would pick 'be' (0.39); restricted to the case langs it
+    # must fall to the best ALLOWED one — Russian — not transcribe as Belarusian
+    monkeypatch.setattr(transcription_service, "ALLOWED_LANGS", ["he", "ru", "ar", "en"])
+    model = _FakeModel([("be", 0.39), ("ru", 0.30), ("ml", 0.19), ("en", 0.12)])
+    assert _pick_language(model, audio=object()) == "ru"
+
+
+def test_pick_language_none_without_audio_or_allowlist(monkeypatch):
+    monkeypatch.setattr(transcription_service, "ALLOWED_LANGS", ["he", "ru"])
+    assert _pick_language(_FakeModel([("he", 0.9)]), audio=None) is None  # no array
+    monkeypatch.setattr(transcription_service, "ALLOWED_LANGS", [])
+    assert _pick_language(_FakeModel([("he", 0.9)]), audio=object()) is None  # disabled
+
+
+def test_pick_language_malformed_return_degrades_to_none(monkeypatch):
+    # a surprise shape from detect_language must fall back to auto-detect (None),
+    # never escape and fail the file
+    monkeypatch.setattr(transcription_service, "ALLOWED_LANGS", ["he", "ru"])
+
+    class Bad:
+        def detect_language(self, audio, language_detection_segments=1):
+            return None  # not the expected (lang, prob, all_probs) triple
+
+    assert _pick_language(Bad(), audio=object()) is None
 
 
 def _fake_wav(tmp_path, marker):

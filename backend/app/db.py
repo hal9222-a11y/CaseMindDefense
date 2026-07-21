@@ -13,6 +13,21 @@ def get_engine():
     engine = create_engine(
         settings.database_url,
         connect_args={"check_same_thread": False},
+        # The DB lives on a drive that drops out for seconds at a time. A dropout
+        # permanently poisons the pooled SQLite connections ("disk I/O error" on
+        # every later call) — the pool then recycles the corpse forever and every
+        # worker dies. pre_ping tests each connection before use and replaces
+        # broken ones, so a drive hiccup costs one retry instead of the whole queue.
+        pool_pre_ping=True,
+        # The default pool (5 + 10 overflow = 15) is too small for this app's
+        # concurrency: request handlers, the background indexer, the resume daemon,
+        # the translator, the 4s /status poll, AND the whole-chunk scans behind
+        # phone-directory / find-connections that hold a connection for seconds.
+        # Under the desktop's polling + a couple of heavy queries the pool
+        # exhausted and requests timed out — the UI read that as "server down".
+        # WAL lets these readers run concurrently, so a generous pool is safe.
+        pool_size=30,
+        max_overflow=50,
     )
 
     # This app runs many concurrent SQLite connections — request handlers, the
@@ -47,10 +62,16 @@ _MIGRATIONS = {
     },
     "evidence": {
         "case_id": "INTEGER",
+        "translation_status": "TEXT NOT NULL DEFAULT ''",
+        "translation": "TEXT NOT NULL DEFAULT ''",
+        "translation_chunks_done": "INTEGER NOT NULL DEFAULT 0",
     },
     "auditevent": {
         "prev_hash": "TEXT NOT NULL DEFAULT ''",
         "event_hash": "TEXT NOT NULL DEFAULT ''",
+    },
+    "case": {
+        "role_context": "TEXT NOT NULL DEFAULT ''",
     },
 }
 
@@ -58,12 +79,13 @@ _MIGRATIONS = {
 def _migrate_columns(engine) -> None:
     with engine.connect() as conn:
         for table, new_columns in _MIGRATIONS.items():
-            existing = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
+            # quoted: "case" is a reserved SQL keyword
+            existing = {row[1] for row in conn.exec_driver_sql(f'PRAGMA table_info("{table}")')}
             if not existing:
                 continue  # table not created yet; create_all will build it complete
             for name, ddl in new_columns.items():
                 if name not in existing:
-                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+                    conn.exec_driver_sql(f'ALTER TABLE "{table}" ADD COLUMN {name} {ddl}')
         conn.commit()
 
 

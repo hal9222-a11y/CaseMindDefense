@@ -10,9 +10,14 @@ from app.services.entity_service import (
     HEBREW_TOKEN_RE,
     ISRAELI_ID_RE,
     LATIN_ENTITY_RE,
-    PHONE_RE,
     VEHICLE_PLATE_RE,
+    extract_phones,
+    is_noise_name,
+    looks_like_a_date,
+    mask_phones,
+    valid_israeli_id,
 )
+from app.services.russian_ner import extract_russian_entities
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +35,45 @@ LABEL_MAP = {
 }
 
 
+# "auto" = GPU when one is present, else CPU. Force with CASEMIND_NER_DEVICE.
+NER_DEVICE = os.getenv("CASEMIND_NER_DEVICE", "auto")
+
+
 @lru_cache(maxsize=1)
 def _load_ner():
     try:
         from transformers import pipeline
-
-        return pipeline(
-            "token-classification",
-            model=NER_MODEL_NAME,
-            aggregation_strategy="simple",
-        )
     except Exception as exc:
         logger.warning("NER model unavailable, using regex fallback: %s", exc)
         return None
+
+    # Run NER on the GPU when it's free. CPU BERT inference over a phone dump's
+    # tens of thousands of chunks runs for HOURS; on the GPU it's minutes.
+    # Indexing (NER) and transcription (Whisper) never run at once - the index
+    # queue is single-threaded - so they don't fight over the 4GB card. Try GPU
+    # first, fall back to CPU on any failure (e.g. OOM) rather than dropping to
+    # the regex-only path, which would lose all model entities.
+    try:
+        import torch
+
+        want_gpu = NER_DEVICE != "cpu" and torch.cuda.is_available()
+    except Exception:
+        want_gpu = False
+
+    for device in ([0, -1] if want_gpu else [-1]):
+        try:
+            ner = pipeline(
+                "token-classification",
+                model=NER_MODEL_NAME,
+                aggregation_strategy="simple",
+                device=device,
+            )
+            logger.info("NER on %s", "GPU (cuda:0)" if device == 0 else "CPU")
+            return ner
+        except Exception as exc:
+            logger.warning("NER load on device=%s failed: %s", device, exc)
+    logger.warning("NER model unavailable, using regex fallback")
+    return None
 
 
 def extract_entities(text: str) -> list[dict]:
@@ -64,22 +95,46 @@ def extract_entities(text: str) -> list[dict]:
                 if len(word) < 2 or float(ent.get("score", 0.0)) < NER_MIN_SCORE:
                     continue
                 group = ent.get("entity_group") or ""
-                label = LABEL_MAP.get(group, group.lower() or "other")
+                # Only the categories we actually mean. Falling back to the raw
+                # model code leaked its internal tags to the user as entity
+                # types — "duc", "ang", "misc" — carrying values like "ip",
+                # "mn" and ". 2". Noise dressed up as findings.
+                label = LABEL_MAP.get(group)
+                if label is None:
+                    continue
                 entities.append({"text": word, "label": label})
         except Exception as exc:
             logger.warning("NER inference failed on chunk: %s", exc)
 
-    # Cyrillic names always via regex: the Hebrew NER model does not
-    # cover Russian, and Russian capitalization makes this reliable
-    for entity in CYRILLIC_ENTITY_RE.findall(text):
-        entities.append({"text": entity, "label": "name"})
+    # Russian: a real NER model, not "every capitalised word is a name". The
+    # regex is a fallback for a missing model ONLY — an empty result from the
+    # model is an answer, and falling back on it would put the noise back.
+    russian = extract_russian_entities(text)
+    if russian is None:
+        for entity in CYRILLIC_ENTITY_RE.findall(text):
+            if not is_noise_name(entity):
+                entities.append({"text": entity, "label": "name"})
+    else:
+        entities.extend(russian)
 
-    for phone in PHONE_RE.findall(text):
-        entities.append({"text": phone.strip(), "label": "phone"})
-    for israeli_id in ISRAELI_ID_RE.findall(text):
-        entities.append({"text": israeli_id, "label": "israeli_id"})
-    for plate in VEHICLE_PLATE_RE.findall(text):
-        entities.append({"text": plate, "label": "vehicle_plate"})
+    # Phones via libphonenumber: it validates the number and understands other
+    # countries. The old pattern was Israel-only, so the Russian (+7) and
+    # Belarusian (+375) numbers in this material were invisible.
+    for phone in extract_phones(text):
+        entities.append({"text": phone, "label": "phone"})
+
+    # The ID and plate patterns are just runs of digits, so they happily match
+    # *inside* a phone number ("052-465-7474" also yielded the "plate" 465-7474)
+    # and inside dates in filenames. Blank out what is already a phone first.
+    remaining = mask_phones(text)
+    for israeli_id in ISRAELI_ID_RE.findall(remaining):
+        # verify the check digit: half the "IDs" found in the real case were junk
+        if valid_israeli_id(israeli_id):
+            entities.append({"text": israeli_id, "label": "israeli_id"})
+    for plate in VEHICLE_PLATE_RE.findall(remaining):
+        # every "plate" in the real case was a date out of a WhatsApp filename
+        if not looks_like_a_date(plate):
+            entities.append({"text": plate, "label": "vehicle_plate"})
 
     if ner is None:
         for entity in LATIN_ENTITY_RE.findall(text):

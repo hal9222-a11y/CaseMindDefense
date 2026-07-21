@@ -1,18 +1,65 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 OLLAMA_URL = os.getenv("CASEMIND_OLLAMA_URL", "http://127.0.0.1:11434")
-LLM_MODEL = os.getenv("CASEMIND_LLM_MODEL", "qwen2.5:3b-instruct")
 LLM_TIMEOUT_SECONDS = int(os.getenv("CASEMIND_LLM_TIMEOUT", "120"))
+
+# "ollama" (local, private — default) or "gemini" (cloud, fast, sends text to
+# Google). Gemini is opt-in: the evidence leaves the machine, so the user turns
+# it on deliberately.
+LLM_PROVIDER = os.getenv("CASEMIND_LLM_PROVIDER", "ollama").lower()
+GEMINI_API_KEY = os.getenv("CASEMIND_GEMINI_API_KEY") or None
+GEMINI_MODEL = os.getenv("CASEMIND_GEMINI_MODEL", "gemini-2.0-flash")
+
+# The app auto-selects the best general chat model actually installed in Ollama,
+# so a machine with capable models uses them without configuration. Set
+# CASEMIND_LLM_MODEL to force a specific model instead.
+FORCED_MODEL = os.getenv("CASEMIND_LLM_MODEL") or None
+
+# Image description: an Ollama VISION model (llava / moondream / qwen2.5vl …) used
+# to describe images so a photo with NO readable text is still findable in search.
+# Empty = disabled (default): the feature stays dormant until the user pulls a
+# vision model and sets this, so nothing changes on machines without one.
+VISION_MODEL = os.getenv("CASEMIND_VISION_MODEL", "") or None
+# What the model is told to emit when an image has no identifiable content. Kept
+# as a constant because describe_image also uses it to RECOGNISE that answer and
+# drop it — indexing "no identifiable content" as a caption would fabricate an
+# 'indexed' status on junk images and pollute search with one meaningless string
+# shared by dozens of them.
+VISION_NO_CONTENT_MARKER = "תמונה ללא תוכן מזוהה"
+VISION_PROMPT = os.getenv(
+    "CASEMIND_VISION_PROMPT",
+    "תאר במשפט אחד קצר ועובדתי מה נראה בתמונה: עצמים, אנשים, סצנה, טקסט גלוי. "
+    "אל תנחש ואל תמציא שמות, תאריכים, מקומות, אמנים, רישיונות או פרטים שאינם "
+    "נראים בבירור. אם התמונה מטושטשת/גרפית ולא ניתן לזהות תוכן ממשי, כתוב "
+    f'"{VISION_NO_CONTENT_MARKER}". ענה בעברית בלבד.',
+)
+
+# names/families that aren't general-purpose chat models — never auto-select
+_EXCLUDE_RE = re.compile(r"ocr|embed|rerank|whisper|bge|vl|vision|code|guard|cloud", re.I)
+# Reasoning models emit a long hidden "thinking" pass before the answer — on
+# local hardware that is minutes per call, which reads as "AI timed out" to the
+# user. Auto-select must prefer a plain chat model even when a reasoning model
+# is bigger (qwen3.5:9b kept beating gemma4:latest on size and timing out).
+# ponytail: name heuristic, misses unlisted reasoning families; upgrade path is
+# Ollama /api/show "capabilities" (lists "thinking") if this mismatches.
+_REASONING_RE = re.compile(r"qwen3|deepseek-r|qwq|magistral|think|reason", re.I)
+# largest model to auto-pick: bigger ones give better answers but on local CPU
+# a 30B model can take minutes and re-introduce timeouts. Override via env to
+# force a bigger model if the machine has the GPU for it.
+_SIZE_CEILING_B = float(os.getenv("CASEMIND_LLM_MAX_PARAMS_B", "14"))
 
 SYSTEM_PROMPT = """You are an evidence analysis assistant for a criminal defense team.
 You will receive numbered evidence excerpts and a question.
@@ -26,30 +73,334 @@ Hard rules:
 - If the evidence does not answer the question, reply exactly: NOT_FOUND
 - Be concise and factual. No speculation."""
 
+# The cross-cutting rules that govern every analysis call — the distilled core of
+# the defense-agent charter (full text: docs/defense_agent_persona_he.md). Kept
+# short on purpose: a local model has to spend its context on the evidence, not
+# on a 6000-word persona. The structured features (contradiction engine,
+# weaknesses, elements matrix…) implement the per-section procedures; this is
+# only what must hold on EVERY prompt.
+DEFENSE_PRINCIPLES = """אתה משמש כצוות הגנה פלילי בישראל: סנגור מנוסה, חוקר משטרה לשעבר ומומחה לדיני הראיות וסדר הדין הפלילי הישראלי. תפקידך לאתר, לארגן ולהציף בפני הסנגור כל ממצא שעשוי לסייע להגנה — אינך מחליף את שיקול דעתו.
+
+עקרונות מחייבים לצוות הגנה פלילי (חלים על כל ניתוח):
+• נקודת מבט של הגנה — אך אל תאמץ אוטומטית את גרסת הנאשם. הצג תמיד גם ראיה מזכה וגם את הטיעון החזק ביותר של התביעה.
+• הפרד טענה מעובדה. "המתלונן טוען ש..." אינו עובדה. אל תהפוך טענה, מסקנת חוקר או השערה לעובדה מוכחת.
+• אל תמציא: לא עובדה חסרה, לא סעיף חוק, לא פסק דין, לא ציטוט. אל תשלים מילה לא ברורה בלי לסמן זאת.
+• הנחות אסורות: בעל הטלפון אינו בהכרח כותב ההודעה; בעל החשבון אינו בהכרח מבצע הפעולה; שם באנשי קשר אינו מוכיח זהות; מיקום מכשיר אינו מיקום האדם; מספר שיחות אינו מוכיח את תוכנן; יחסים כספיים אינם מוכיחים כוונה פלילית; שתיקה/מחיקה/אי-מענה אינם מוכיחים אשמה.
+• הפרד קבילות ממשקל ומאותנטיות — ראיה קבילה עשויה להיות חלשה.
+• סמן רמת ודאות לכל ממצא: גבוהה / בינונית / נמוכה / לא ניתן לקבוע מהחומר.
+• כשחסר חומר או כשלא ניתן לקבוע — אמור זאת במפורש. אל תנחש."""
+
+
+def with_principles(system: str) -> str:
+    """Prepend the defense-agent core principles to an analysis system prompt."""
+    return f"{DEFENSE_PRINCIPLES}\n\n{system}"
+
 HEBREW_RE = re.compile("[֐-׿]")
 
 
-_AVAIL_TTL = 15.0  # seconds; the status bar polls often, don't hammer Ollama
-_avail_cache: dict[str, float | bool] = {"ts": 0.0, "value": False}
+_MODEL_TTL = 15.0  # seconds; the status bar polls often, don't hammer Ollama
+_model_cache: dict[str, float | str | None] = {"ts": 0.0, "model": None}
+
+
+def _installed_models() -> list[dict]:
+    with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=2) as resp:
+        return json.load(resp).get("models", [])
+
+
+def _size_b(model: dict) -> float:
+    """Parameter count in billions, parsed from Ollama's '9.7B' / '494.03M' /
+    '1t' strings. 0.0 when unknown."""
+    raw = str(model.get("details", {}).get("parameter_size") or "").strip().lower()
+    match = re.match(r"([\d.]+)\s*([bmt]?)", raw)
+    if not match:
+        return 0.0
+    value = float(match.group(1))
+    return {"m": value / 1000, "t": value * 1000, "b": value, "": value}[match.group(2)]
+
+
+def _pick_model(installed: list[dict]) -> str | None:
+    """Choose which installed model to use: the forced one if set and present,
+    else the largest general chat model within the size ceiling (skipping
+    OCR/vision/code/embedding models). Falls back to the smallest available if
+    every general model exceeds the ceiling, so the user always gets an LLM."""
+    if not installed:
+        return None
+    if FORCED_MODEL:
+        base = FORCED_MODEL.split(":")[0]
+        forced = next(
+            (m["name"] for m in installed
+             if m["name"] == FORCED_MODEL or m["name"].split(":")[0] == base),
+            None,
+        )
+        if forced:
+            return forced
+        # forced model isn't installed (e.g. it was removed) — fall through to
+        # auto-select instead of leaving the app with NO AI. A pinned model is a
+        # preference, not a reason to have zero LLM when 14 others are present.
+        logger.warning(
+            "CASEMIND_LLM_MODEL=%s is not installed; auto-selecting instead", FORCED_MODEL
+        )
+
+    def _label(m: dict) -> str:
+        return f"{m.get('name', '')} {m.get('details', {}).get('family', '')}"
+
+    usable = [m for m in installed if not _EXCLUDE_RE.search(_label(m))] or installed
+    within = [m for m in usable if _size_b(m) <= _SIZE_CEILING_B]
+    if within:
+        # largest plain model first; a reasoning model only when nothing else fits
+        return max(
+            within,
+            key=lambda m: (not _REASONING_RE.search(_label(m)), _size_b(m)),
+        )["name"]
+    # everything is over the ceiling: smallest one, still preferring plain chat
+    return min(
+        usable,
+        key=lambda m: (bool(_REASONING_RE.search(_label(m))), _size_b(m)),
+    )["name"]
+
+
+def active_model() -> str | None:
+    """The model the app will use. For Gemini (cloud) that is simply the
+    configured Gemini model when a key is present. Otherwise the Ollama model
+    auto-selected from what's installed (or CASEMIND_LLM_MODEL when set). None
+    when no model is available. Cached briefly since the status bar polls often."""
+    if LLM_PROVIDER == "gemini":
+        return GEMINI_MODEL if GEMINI_API_KEY else None
+
+    now = time.monotonic()
+    if now - float(_model_cache["ts"]) < _MODEL_TTL:
+        return _model_cache["model"]  # type: ignore[return-value]
+    try:
+        model = _pick_model(_installed_models())
+    except Exception:
+        model = None
+    _model_cache["ts"] = now
+    _model_cache["model"] = model
+    return model
 
 
 def ollama_available() -> bool:
-    now = time.monotonic()
-    if now - float(_avail_cache["ts"]) < _AVAIL_TTL:
-        return bool(_avail_cache["value"])
+    return active_model() is not None
+
+
+# A whole WhatsApp export is far past any local model's context window, so long
+# text is translated in pieces and stitched back together. Sized to stay well
+# inside an 8B model's context while keeping the number of round-trips sane.
+TRANSLATE_CHUNK_CHARS = 2500
+
+
+def _split_for_translation(text: str, limit: int = TRANSLATE_CHUNK_CHARS) -> list[str]:
+    """Split on line boundaries into <=limit-char pieces, so a chat transcript
+    is never cut mid-message. A single over-long line is passed through whole
+    (the model truncates it, which beats dropping it silently)."""
+    chunks: list[str] = []
+    current: list[str] = []
+    size = 0
+    for line in text.splitlines(keepends=True):
+        if current and size + len(line) > limit:
+            chunks.append("".join(current))
+            current, size = [], 0
+        current.append(line)
+        size += len(line)
+    if current:
+        chunks.append("".join(current))
+    return chunks
+
+
+def translate(text: str, target: str = "Hebrew") -> str | None:
+    """Translate free text into `target` (default Hebrew) with the local LLM —
+    for reading Russian/other-language evidence. Personal and place names are
+    transliterated into the target script. Long documents are translated in
+    chunks and rejoined. Returns the translation, "" for empty input, or None
+    when the LLM is unavailable/fails on the first chunk."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+
+    pieces: list[str] = []
+    for i, chunk in enumerate(_split_for_translation(text)):
+        out = translate_chunk(chunk, target)
+        if out is None:
+            if i == 0:
+                return None  # LLM unavailable — caller falls back to an error
+            # partial failure mid-document: keep what we have, flag the gap
+            # rather than throwing away minutes of completed translation
+            logger.warning("translation failed on chunk %s of a long document", i)
+            pieces.append("[…קטע שלא תורגם…]")
+            continue
+        pieces.append(out)
+    return "\n".join(pieces)
+
+
+def translate_chunk(chunk: str, target: str = "Hebrew") -> str | None:
+    """One chunk, one LLM call. Exposed so the background worker can save
+    progress after each piece instead of losing hours of work on a restart."""
+    return _chat([
+        {
+            "role": "system",
+            "content": (
+                f"You are a professional legal translator. Translate the user's "
+                f"text into {target}. Output ONLY the translation — no notes, no "
+                f"transliteration in brackets, no original text. Render personal "
+                f"and place names in {target} script. Keep line breaks, timestamps, "
+                f"phone numbers and speaker names in place."
+            ),
+        },
+        {"role": "user", "content": chunk},
+    ])
+
+
+# The background worker uses small pieces on purpose. Ollama serves one request
+# at a time, so whatever the worker has in flight is exactly how long a user can
+# be stuck waiting. At ~14 chars/sec a 2500-char chunk stalls them for ~3
+# minutes; 700 keeps the worst case under a minute. On-demand translation, where
+# the user is already waiting, keeps the larger chunks (fewer round-trips).
+BACKGROUND_CHUNK_CHARS = int(os.getenv("CASEMIND_BG_CHUNK_CHARS", "700"))
+
+
+def split_for_translation(text: str) -> list[str]:
+    return _split_for_translation(text, limit=BACKGROUND_CHUNK_CHARS)
+
+
+def to_hebrew_name(name: str) -> str | None:
+    """Hebrew form of a personal name (e.g. Юлия → יוליה) so a Russian name can
+    be shown with its Hebrew reading. None if the LLM is unavailable/fails."""
+    name = (name or "").strip()
+    if not name:
+        return ""
+    out = _chat([
+        {
+            "role": "system",
+            "content": (
+                "Transliterate the personal name into Hebrew letters. "
+                "Output ONLY the Hebrew name — no punctuation, no explanation, "
+                "no Latin/Cyrillic."
+            ),
+        },
+        {"role": "user", "content": name},
+    ])
+    if not out:
+        return out
+    # models sometimes add quotes or a trailing note; keep the first line only
+    return out.splitlines()[0].strip().strip('"\'').strip()
+
+
+def complete(prompt: str) -> str | None:
+    """One free-form completion with the active model; None when unavailable."""
+    return _chat([{"role": "user", "content": prompt}])
+
+
+_vision_ok: bool | None = None  # cache: None=unchecked, True/False once resolved
+
+
+def _vision_available() -> bool:
+    """Whether the configured vision model is actually installed in Ollama.
+    Checked once and cached so we don't warn per-image across a 14k-image dump."""
+    global _vision_ok
+    if VISION_MODEL is None:
+        return False
+    if _vision_ok is None:
+        try:
+            names = {m.get("name", "") for m in _installed_models()}
+        except Exception:
+            # Ollama unreachable right now — treat as unavailable but DON'T
+            # cache, so captioning self-enables once Ollama is back. And never
+            # let this probe raise: captioning must not break indexing.
+            return False
+        _vision_ok = VISION_MODEL in names or any(
+            n.startswith(f"{VISION_MODEL}:") for n in names
+        )
+        if not _vision_ok:
+            logger.warning(
+                "CASEMIND_VISION_MODEL=%r is not installed in Ollama; image "
+                "description disabled. Install it with: ollama pull %s",
+                VISION_MODEL, VISION_MODEL,
+            )
+    return _vision_ok
+
+
+VISION_MAX_SIDE = int(os.getenv("CASEMIND_VISION_MAX_SIDE", "768"))
+
+
+def _downscaled_image_bytes(path: str | Path) -> bytes | None:
+    """Read an image and shrink its longest side to VISION_MAX_SIDE. A vision
+    model tokenizes by pixel dimensions, so a full-res phone photo (4000px) can
+    take minutes to caption while a 768px copy takes seconds with no loss for a
+    "what is this" description. Returns None when the file can't be read OR isn't
+    a decodable image — a corrupt/zero-size file must be skipped, not handed to
+    Ollama raw (it stalls the model for the full timeout on garbage input)."""
     try:
-        with urllib.request.urlopen(f"{OLLAMA_URL}/api/tags", timeout=2) as resp:
-            models = json.load(resp).get("models", [])
-        value = any(m.get("name", "").startswith(LLM_MODEL.split(":")[0]) for m in models)
-    except Exception:
-        value = False
-    _avail_cache["ts"] = now
-    _avail_cache["value"] = value
-    return value
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        logger.warning("could not read image for description: %s", exc)
+        return None
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        with Image.open(BytesIO(raw)) as im:
+            if min(im.size) == 0:
+                return None  # zero-dimension / corrupt — skip, don't stall Ollama
+            if max(im.size) <= VISION_MAX_SIDE:
+                return raw
+            im = im.convert("RGB")
+            im.thumbnail((VISION_MAX_SIDE, VISION_MAX_SIDE))
+            buf = BytesIO()
+            im.save(buf, format="JPEG", quality=85)
+            return buf.getvalue()
+    except Exception as exc:  # not a decodable image — skip rather than stall
+        logger.debug("image not decodable, skipping description (%s): %s", path, exc)
+        return None
 
 
-def synthesize_answer(question: str, citations: list[dict]) -> str | None:
-    """Ask the local LLM to answer from the cited excerpts.
+def describe_image(path: str | Path) -> str | None:
+    """A short description of what an image shows, so a photo with NO readable
+    text is still findable in search ("locate the picture of the car"). Uses an
+    Ollama vision model (CASEMIND_VISION_MODEL). Returns None when disabled, the
+    model isn't installed, or the call fails — captioning is best-effort and must
+    never break indexing."""
+    # gemini first: no point probing Ollama for a model we won't use
+    if LLM_PROVIDER == "gemini" or not _vision_available():
+        return None  # local vision only for now
+    data = _downscaled_image_bytes(path)
+    if data is None:
+        return None
+    b64 = base64.b64encode(data).decode("ascii")
+    messages = [{"role": "user", "content": VISION_PROMPT, "images": [b64]}]
+    try:
+        # ponytail: force all layers onto the GPU (num_gpu=99) with a small
+        # context. Ollama's auto-offload under-fills a 4GB card and spills the
+        # model to CPU (minutes/image, hits the timeout); full offload keeps it
+        # resident (tens of seconds/image on a weak GPU, far less on a strong
+        # one). Captioning is meant to run only when the GPU is free (the backend
+        # is down), so the model fits. If it ever runs against a busy GPU it
+        # fails fast -> None -> image left as-is, per the contract below.
+        # num_predict caps length and repeat_penalty breaks the repetition loops
+        # this small VLM otherwise falls into (a caption degenerating into the
+        # same phrase 20x, which both wastes minutes and pollutes the text).
+        out = _post_chat(
+            VISION_MODEL, messages, num_gpu=99, num_ctx=4096,
+            extra_options={"num_predict": 90, "repeat_penalty": 1.4, "temperature": 0.0},
+        )
+    except Exception as exc:
+        # GPU busy / model crash / timeout — skip the description, keep indexing.
+        logger.warning("image description failed (%s): %s", VISION_MODEL, exc)
+        return None
+    caption = out.strip()
+    # the model reporting "no identifiable content" is a miss, not a caption —
+    # leave the image as no_text_found rather than indexing the sentinel.
+    # ponytail: exact-match on the instructed marker (tolerating wrapping quotes
+    # and a trailing period); paraphrases the model invents still get indexed.
+    if not caption or caption.strip('".״“” ').strip() == VISION_NO_CONTENT_MARKER:
+        return None
+    return caption
+
+
+def synthesize_answer(question: str, citations: list[dict], role: str = "") -> str | None:
+    """Ask the local LLM to answer from the cited excerpts. `role` is the
+    user's declared role in the case ("סנגור של X") — the answer is framed
+    from that perspective but stays grounded in the citations.
 
     Returns the answer text, or None when the LLM is unavailable/fails —
     callers must fall back to citation-only mode. Raises nothing."""
@@ -67,8 +418,14 @@ def synthesize_answer(question: str, citations: list[dict]) -> str | None:
             "End every sentence with its source marker, e.g. [1]."
         )
 
+    system = with_principles(SYSTEM_PROMPT)
+    if role:
+        system += (
+            f"\nתפקיד המשתמש בתיק: {role}. "
+            "מסגר את התשובה מנקודת המבט הזו, אך הסתמך אך ורק על הראיות המצוטטות."
+        )
     content = _chat([
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {
             "role": "user",
             "content": (
@@ -97,24 +454,171 @@ def _has_prose(answer: str) -> bool:
     return bool(_WORD_RE.search(without_citations))
 
 
+# Ollama serves one request at a time per model. The background translator would
+# otherwise hold it for hours, and a user's question would sit behind it — a
+# trivial call measured 219s while the worker ran. So user-facing calls are
+# counted, and the background worker waits for them to finish before starting
+# its next piece.
+_local = threading.local()
+_interactive_count = 0
+_idle = threading.Condition()
+
+
+def is_background() -> bool:
+    return getattr(_local, "background", False)
+
+
+def mark_background() -> None:
+    """Called by the background worker thread; its calls yield to the user."""
+    _local.background = True
+
+
+# Set on every user request (see main.py). The gate below is not enough on its
+# own: Ollama runs one request at a time, so a chunk already in flight still
+# blocks the user for its full duration. Keeping background chunks small bounds
+# that stall, and standing down while the user is active means it happens at
+# most once per session rather than on every question.
+USER_IDLE_GRACE_SECONDS = float(os.getenv("CASEMIND_USER_IDLE_GRACE", "90"))
+_last_user_activity = 0.0
+
+
+def note_user_activity() -> None:
+    global _last_user_activity
+    _last_user_activity = time.monotonic()
+
+
+def user_is_active() -> bool:
+    return (time.monotonic() - _last_user_activity) < USER_IDLE_GRACE_SECONDS
+
+
+def wait_until_user_idle(timeout: float = 300.0) -> None:
+    """Block while a user-facing LLM call is in flight, or the user is actively
+    using the app. Background work is never worth making a person wait."""
+    with _idle:
+        _idle.wait_for(lambda: _interactive_count == 0, timeout=timeout)
+    deadline = time.monotonic() + timeout
+    while user_is_active() and time.monotonic() < deadline:
+        time.sleep(2)
+
+
 def _chat(messages: list[dict]) -> str | None:
-    payload = {
-        "model": LLM_MODEL,
-        "stream": False,
-        "messages": messages,
-        "options": {"temperature": 0.1},
-    }
+    model = active_model()
+    if model is None:
+        return None
+    if is_background():
+        return _chat_call(model, messages)
+
+    global _interactive_count
+    with _idle:
+        _interactive_count += 1
+    try:
+        return _chat_call(model, messages)
+    finally:
+        with _idle:
+            _interactive_count -= 1
+            _idle.notify_all()
+
+
+def _chat_call(model: str, messages: list[dict]) -> str | None:
+    # one dispatch point for every LLM call. Default is local Ollama (evidence
+    # never leaves the machine). Gemini is opt-in and sends the text to Google —
+    # a privacy trade-off the user makes deliberately, for cloud speed.
+    if LLM_PROVIDER == "gemini":
+        return _gemini_call(messages)
+    return _ollama_call(model, messages)
+
+
+def _post_chat(model: str, messages: list[dict], num_gpu: int | None,
+               num_ctx: int | None = None, extra_options: dict | None = None) -> str:
+    options: dict = {"temperature": 0.1}
+    if num_gpu is not None:
+        options["num_gpu"] = num_gpu  # 0 = force CPU (no GPU layers)
+    if num_ctx is not None:
+        options["num_ctx"] = num_ctx
+    if extra_options:
+        options.update(extra_options)
+    payload = {"model": model, "stream": False, "messages": messages, "options": options}
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/chat",
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
+    # a CPU pass is far slower than GPU; give it materially more time before
+    # the client gives up, or a genuine CPU answer reads as a timeout
+    timeout = LLM_TIMEOUT_SECONDS if num_gpu != 0 else max(LLM_TIMEOUT_SECONDS, 600)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = json.load(resp)
+    return (body.get("message", {}).get("content") or "").strip()
+
+
+def _looks_like_gpu_oom(exc: Exception) -> bool:
+    """Ollama returns HTTP 500 when llama-server crashes loading the model —
+    which on this 4GB card happens whenever Whisper is already holding the GPU.
+    The body names a stack-overrun / CUDA / memory failure."""
+    if not isinstance(exc, urllib.error.HTTPError) or exc.code != 500:
+        return False
+    try:
+        body = exc.read().decode("utf-8", "ignore").lower()
+    except Exception:
+        return True  # a 500 with no readable body: treat as the same class
+    return any(s in body for s in ("terminated", "buffer", "memory", "cuda", "vram", "0xc0000409"))
+
+
+def _ollama_call(model: str, messages: list[dict]) -> str | None:
+    try:
+        return _post_chat(model, messages, num_gpu=None) or None
+    except Exception as exc:
+        # GPU busy (transcription runs for days on the shared card) -> don't
+        # fail the user's request, run this one on the CPU instead. Slower, but
+        # it answers, and it doesn't fight Whisper for the 4GB GPU.
+        if _looks_like_gpu_oom(exc):
+            logger.warning("LLM GPU load failed (GPU busy?); retrying on CPU")
+            try:
+                return _post_chat(model, messages, num_gpu=0) or None
+            except Exception as cpu_exc:
+                logger.warning("LLM CPU retry also failed: %s", cpu_exc)
+                return None
+        logger.warning("LLM call failed: %s", exc)
+        return None
+
+
+def _gemini_call(messages: list[dict]) -> str | None:
+    """Google Gemini via REST. Cloud — the text leaves the machine. Opt-in only.
+
+    Same message shape as the Ollama path (system + user turns); Gemini wants the
+    system turn as systemInstruction and the rest under contents.
+    """
+    if not GEMINI_API_KEY:
+        logger.warning("Gemini selected but CASEMIND_GEMINI_API_KEY is not set")
+        return None
+
+    system = "\n".join(m["content"] for m in messages if m["role"] == "system")
+    contents = [
+        {"role": "user", "parts": [{"text": m["content"]}]}
+        for m in messages if m["role"] != "system"
+    ]
+    payload: dict = {"contents": contents, "generationConfig": {"temperature": 0.1}}
+    if system:
+        payload["systemInstruction"] = {"parts": [{"text": system}]}
+
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent"
+    )
+    # key goes in a header, never the URL — query strings end up in proxy and
+    # server logs, and this key gates access to case material
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json",
+                 "x-goog-api-key": GEMINI_API_KEY},
+    )
     try:
         with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_SECONDS) as resp:
             body = json.load(resp)
-        return (body.get("message", {}).get("content") or "").strip() or None
+        parts = body["candidates"][0]["content"]["parts"]
+        return "".join(p.get("text", "") for p in parts).strip() or None
     except Exception as exc:
-        logger.warning("LLM call failed: %s", exc)
+        logger.warning("Gemini call failed: %s", exc)
         return None
 
 
@@ -130,6 +634,66 @@ Reply with EXACTLY one line:
 CONTRADICTION | <one short sentence explaining the conflict>
 or
 CONSISTENT"""
+
+
+CLAIM_CONTRADICTION_PROMPT = """You analyze witness/suspect statements and other
+evidence from a criminal case, looking for CONTRADICTIONS a defense team should
+know about. Plain semantic similarity misses these — reason about meaning.
+
+Do this:
+1. Break each source into atomic factual claims (one fact each: who, what,
+   where, when, with whom).
+2. Group claims that concern the SAME person, event, and time window — including
+   a claim in one source and the record that bears on it in another (e.g. "I
+   never met him" vs. a chat log; "I arrived at 20:00" vs. a camera timestamp).
+3. For each cross-source pair that concerns the same matter, classify the
+   relation as one of: contradiction, partial (tension but not decisive),
+   support, independent, unclear.
+4. Rate severity: high (goes to a material fact), medium, or low (minor gap).
+
+Return ONLY a JSON array (no prose) of the CONTRADICTION / PARTIAL / UNCLEAR
+pairs — skip support and independent. Each object:
+{"claim_a": "...", "claim_b": "...", "source_a": <int index>,
+ "source_b": <int index>, "type": "contradiction|partial|unclear",
+ "severity": "high|medium|low", "explanation": "<short, in Hebrew>"}
+The two claims must come from DIFFERENT sources. If there are none, return []."""
+
+
+def _extract_json_array(text: str) -> list | None:
+    """Pull the first JSON array out of a model reply, tolerant of surrounding
+    prose or code fences. None when nothing parses."""
+    try:
+        start = text.index("[")
+        end = text.rindex("]")
+    except ValueError:
+        return None
+    try:
+        parsed = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, list) else None
+
+
+def analyze_claim_contradictions(sources: list[dict], role: str = "") -> list[dict] | None:
+    """One structured pass: decompose sources into atomic claims and return the
+    cross-source contradiction/partial pairs as dicts (source_a/source_b are
+    indices into `sources`). None when the LLM is unavailable/unparseable.
+
+    Verification of each pair is the caller's job (a second judge pass) — this
+    is a screening step, never a legal determination."""
+    if not sources:
+        return []
+    blocks = [f"מקור [{i}] — {s.get('filename', '')}:\n{s.get('text', '')}"
+              for i, s in enumerate(sources)]
+    base = f"{role}\n\n{CLAIM_CONTRADICTION_PROMPT}" if role else CLAIM_CONTRADICTION_PROMPT
+    system = with_principles(base)
+    content = _chat([
+        {"role": "system", "content": system},
+        {"role": "user", "content": "\n\n".join(blocks)},
+    ])
+    if content is None:
+        return None
+    return _extract_json_array(content)
 
 
 def judge_contradiction(text_a: str, text_b: str) -> dict | None:

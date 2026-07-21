@@ -6,7 +6,10 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap, QTextCursor
 from PySide6.QtWidgets import (
+    QHBoxLayout,
     QLabel,
+    QMessageBox,
+    QPushButton,
     QScrollArea,
     QStackedWidget,
     QTextEdit,
@@ -20,6 +23,11 @@ from workers.api_worker import run_async
 IMAGE_MIME_PREFIX = "image/"
 MAX_IMAGE_WIDTH = 900
 
+# measured against a local 8B model on real chat text (~10 chars/sec); keep the
+# estimate pessimistic so the quoted wait is never shorter than the real one
+CHARS_PER_SECOND = 10
+LONG_DOC_CHARS = 2000
+
 
 class PreviewWidget(QWidget):
     """Preview engine: TXT via backend content API, images from the local
@@ -30,9 +38,23 @@ class PreviewWidget(QWidget):
         self.api = api
         self._current_id: int | None = None
         self._highlight: str | None = None
+        self._current_text: str = ""
+        self._ready_translation: str = ""
+        self._translating_selection = False
 
         self._text_view = QTextEdit()
         self._text_view.setReadOnly(True)
+
+        # translate the shown document to Hebrew (for Russian/other evidence)
+        self._translate_button = QPushButton("🇮🇱 תרגם לעברית")
+        self._translate_button.setEnabled(False)
+        self._translate_button.clicked.connect(self._translate)
+
+        # AI brief of the current item — "help me understand this"
+        self._summarize_button = QPushButton("🧠 סכם ב-AI")
+        self._summarize_button.setToolTip("סיכום קצר בעברית של הפריט הנוכחי — מי מופיע ומה עיקרי הדברים")
+        self._summarize_button.setEnabled(False)
+        self._summarize_button.clicked.connect(self._summarize)
 
         self._image_label = QLabel()
         self._image_label.setAlignment(Qt.AlignCenter)
@@ -49,8 +71,14 @@ class PreviewWidget(QWidget):
         self._stack.addWidget(self._text_view)      # 1
         self._stack.addWidget(image_scroll)         # 2
 
+        header = QHBoxLayout()
+        header.addWidget(QLabel("Preview"))
+        header.addStretch()
+        header.addWidget(self._summarize_button)
+        header.addWidget(self._translate_button)
+
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("Preview"))
+        layout.addLayout(header)
         layout.addWidget(self._stack)
         self.setLayout(layout)
 
@@ -58,6 +86,9 @@ class PreviewWidget(QWidget):
         self._current_id = item.get("id")
         self._highlight = highlight
         mime = item.get("mime_type") or ""
+        # summarization works off the indexed chunks, so it is available for any
+        # item type (chat, recording, document, UFDR) once something is selected
+        self._summarize_button.setEnabled(self._current_id is not None)
 
         if mime.startswith("text/"):
             self._show_message("Loading text preview...")
@@ -88,7 +119,18 @@ class PreviewWidget(QWidget):
     def _on_text_loaded(self, payload: dict[str, Any]) -> None:
         if payload.get("id") != self._current_id:
             return  # a different row was selected while this request was in flight
-        self._text_view.setPlainText(payload.get("text", ""))
+        self._current_text = payload.get("text", "")
+        self._ready_translation = payload.get("translation", "")
+
+        if self._ready_translation:
+            # the background worker already did this — show it with no wait
+            self._text_view.setPlainText(
+                f"[תרגום לעברית — הוכן מראש ברקע]\n{self._ready_translation}"
+                f"\n\n———\n[מקור]\n{self._current_text}"
+            )
+        else:
+            self._text_view.setPlainText(self._current_text)
+        self._translate_button.setEnabled(bool(self._current_text.strip()))
         self._stack.setCurrentIndex(1)
         if self._highlight:
             # scroll to and select the cited text; strip snippet ellipses and
@@ -98,10 +140,25 @@ class PreviewWidget(QWidget):
             self._text_view.find(needle)
             self._highlight = None
 
-    def _show_image(self, item: dict[str, Any]) -> None:
+    def _show_image(self, item: dict[str, Any], fresh: bool = False) -> None:
         stored = Path(item.get("stored_path", ""))
         if not stored.exists():
-            self._show_message("Stored image file not found.")
+            if not fresh and item.get("id"):
+                # the row in the table was loaded earlier and its stored_path
+                # may predate an evidence-store move to another drive; the
+                # backend knows the current location — ask it before giving up
+                evidence_id = item["id"]
+                run_async(
+                    self.api.get_evidence,
+                    evidence_id,
+                    on_done=lambda current: (
+                        self._show_image(current, fresh=True)
+                        if self._current_id == evidence_id else None
+                    ),
+                    on_error=self._show_message,
+                )
+                return
+            self._show_message(f"Stored image file not found:\n{stored}")
             return
         pixmap = QPixmap(str(stored))
         if pixmap.isNull():
@@ -112,11 +169,95 @@ class PreviewWidget(QWidget):
         self._image_label.setPixmap(pixmap)
         self._stack.setCurrentIndex(2)
 
+    def _summarize(self) -> None:
+        if self._current_id is None:
+            return
+        self._summarize_button.setEnabled(False)
+        self._summarize_button.setText("🧠 מסכם…")
+        run_async(
+            self.api.summarize_evidence, self._current_id,
+            on_done=self._on_summarized, on_error=self._on_summarize_error,
+        )
+
+    def _on_summarized(self, result: dict[str, Any]) -> None:
+        self._summarize_button.setEnabled(True)
+        self._summarize_button.setText("🧠 סכם ב-AI")
+        summary = result.get("summary")
+        if not summary:
+            reason = {
+                "no_llm": "אין מודל שפה זמין כרגע (Ollama).",
+                "no_text": "אין טקסט מאונדקס לפריט הזה עדיין.",
+                "llm_failed": "המודל לא החזיר סיכום. נסה שוב.",
+            }.get(result.get("reason"), "לא ניתן להפיק סיכום.")
+            QMessageBox.information(self, "סיכום AI", reason)
+            return
+        people = result.get("people") or []
+        who = ("אנשים בפריט: " + ", ".join(people[:12]) + "\n\n") if people else ""
+        # show it in the text pane above the source, so the summary is a lens
+        # over the material rather than a popup you lose
+        self._text_view.setPlainText(
+            f"[סיכום AI — כלי עזר להבנה, לא ראיה · {result.get('model','')}]\n"
+            f"{who}{summary}\n\n———\n[מקור]\n{self._current_text}"
+        )
+        self._stack.setCurrentIndex(1)
+
+    def _on_summarize_error(self, message: str) -> None:
+        self._summarize_button.setEnabled(True)
+        self._summarize_button.setText("🧠 סכם ב-AI")
+        QMessageBox.critical(self, "סיכום AI", message)
+
+    def _translate(self) -> None:
+        # translating only what you highlighted is usually what you want, and on
+        # a local model it is the difference between seconds and many minutes
+        selected = self._text_view.textCursor().selectedText().replace(" ", "\n").strip()
+        text = selected or self._current_text.strip()
+        if not text:
+            return
+
+        if not selected and len(text) > LONG_DOC_CHARS:
+            minutes = max(1, round(len(text) / CHARS_PER_SECOND / 60))
+            answer = QMessageBox.question(
+                self, "מסמך ארוך",
+                f"המסמך מכיל {len(text):,} תווים — תרגום מלא ייקח כ-{minutes} דקות.\n\n"
+                "טיפ: סמן קטע בתצוגה ולחץ שוב כדי לתרגם רק אותו (מהיר בהרבה).\n\n"
+                "לתרגם בכל זאת את כל המסמך?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return
+
+        self._translating_selection = bool(selected)
+        self._translate_button.setEnabled(False)
+        self._translate_button.setText("🇮🇱 מתרגם…")
+        run_async(
+            self.api.translate_text, text,
+            on_done=self._on_translated, on_error=self._on_translate_error,
+        )
+
+    def _on_translated(self, result: dict[str, Any]) -> None:
+        self._translate_button.setText("🇮🇱 תרגם לעברית")
+        self._translate_button.setEnabled(True)
+        translated = result.get("translated", "")
+        header = "[תרגום הקטע המסומן]" if self._translating_selection else "[תרגום לעברית]"
+        # keep the original below the translation — evidence must stay verifiable
+        self._text_view.setPlainText(
+            f"{header}\n{translated}\n\n———\n[מקור]\n{self._current_text}"
+        )
+        self._stack.setCurrentIndex(1)
+
+    def _on_translate_error(self, message: str) -> None:
+        self._translate_button.setText("🇮🇱 תרגם לעברית")
+        self._translate_button.setEnabled(True)
+        QMessageBox.critical(self, "שגיאת תרגום", message)
+
     def _show_message(self, message: str) -> None:
+        self._translate_button.setEnabled(False)
         self._message_label.setText(message)
         self._stack.setCurrentIndex(0)
 
     def clear(self) -> None:
         self._current_id = None
         self._highlight = None
+        self._current_text = ""
+        self._translate_button.setEnabled(False)
         self._show_message("Select evidence to preview.")

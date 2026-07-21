@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **Russian → Hebrew translation**: evidence in Russian can be read in Hebrew.
+  The preview has a "🇮🇱 תרגם לעברית" button that translates the open document
+  with the local LLM (`POST /translate`, Hebrew shown above the original so
+  both stay visible). On the Persons page, "🇮🇱 עברית לשמות" transliterates
+  Cyrillic person names (Юлия → יוליה) and stores them, so the Hebrew reading
+  shows beside the Russian name everywhere (`POST /persons/translate-names`,
+  `name_he` on each person). Needs a local LLM — clean 503 when Ollama is down
+
+- **Auto-selects the best installed LLM** (no more defaulting to a tiny
+  model): instead of a hardcoded `qwen2.5:3b-instruct`, the app picks the
+  largest general chat model actually installed in Ollama, skipping
+  OCR/vision/code/embedding models and capping size (default ≤14B) so a huge
+  model doesn't make answers time out on CPU. Override with
+  `CASEMIND_LLM_MODEL` (force a model) or `CASEMIND_LLM_MAX_PARAMS_B` (raise
+  the cap on a GPU box). The status bar shows the model actually in use
+
+- **Status bar shows what's processing now**: while indexing runs, the bar
+  names the current file and its stage (OCR / תמלול / אינדוקס) and how many
+  files are still queued, instead of only a count
+
 - **Fewer intermittent "database is locked" 500s**: SQLite now runs in WAL
   mode with a 30s busy timeout. The app has many concurrent connections
   (request handlers, background indexer, startup resume, the 4s status poll);
