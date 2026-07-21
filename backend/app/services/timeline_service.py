@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import datetime
+from functools import lru_cache
 import re
 
 from sqlmodel import Session, select
@@ -45,6 +46,10 @@ def _detect_order(raw_dates: list[str]) -> str:
     return "day_first"
 
 
+# the same date string repeats thousands of times across a case's chunks (every
+# chat line starts with one) — memoize so strptime runs once per unique date, not
+# ~500k times. That was 10s of the ~18s /timeline build.
+@lru_cache(maxsize=100_000)
 def _normalize_date(raw: str, order: str = "day_first") -> str | None:
     raw = (raw or "").strip()
     if not raw:
@@ -79,16 +84,25 @@ def build_timeline(session: Session, case_id: int | None = None) -> list[dict]:
 
     allowed = case_evidence_ids(session, case_id)
 
-    chunks_by_evidence: dict[int, list[EvidenceChunk]] = defaultdict(list)
-    for chunk in session.exec(select(EvidenceChunk)).all():
-        if allowed is not None and chunk.evidence_id not in allowed:
+    # Only the columns we scan — NOT the ~3.6KB embedding string each chunk row
+    # carries. Loading whole EvidenceChunk rows made /timeline a ~20s table slurp
+    # that blew past the desktop's 15s request timeout, so the UI reported the
+    # server as unavailable.
+    chunks_by_evidence: dict[int, list[tuple[int, str, str]]] = defaultdict(list)
+    for ev_id, idx, text, loc in session.exec(
+        select(
+            EvidenceChunk.evidence_id, EvidenceChunk.chunk_index,
+            EvidenceChunk.text, EvidenceChunk.source_location,
+        )
+    ):
+        if allowed is not None and ev_id not in allowed:
             continue
-        chunks_by_evidence[chunk.evidence_id].append(chunk)
+        chunks_by_evidence[ev_id].append((idx, text or "", loc))
 
     events: list[dict] = []
     for evidence_id, chunks in chunks_by_evidence.items():
         raw_dates = [
-            m.group(1) for c in chunks for m in DATE_RE.finditer(c.text or "")
+            m.group(1) for (_, text, _) in chunks for m in DATE_RE.finditer(text)
         ]
         order = _detect_order(raw_dates)
 
@@ -96,12 +110,11 @@ def build_timeline(session: Session, case_id: int | None = None) -> list[dict]:
         # a passage holds dozens of identical dates — emitting each one buried
         # the timeline in duplicate rows pointing at the same text.
         seen: set[tuple[int, str]] = set()
-        for chunk in chunks:
-            text = chunk.text or ""
+        for idx, text, loc in chunks:
             for match in DATE_RE.finditer(text):
                 raw_date = match.group(1)
                 normalized = _normalize_date(raw_date, order)
-                key = (chunk.chunk_index, normalized or raw_date)
+                key = (idx, normalized or raw_date)
                 if key in seen:
                     continue
                 seen.add(key)
@@ -110,8 +123,8 @@ def build_timeline(session: Session, case_id: int | None = None) -> list[dict]:
                         "date": raw_date,
                         "normalized_date": normalized,
                         "evidence_id": evidence_id,
-                        "chunk_index": chunk.chunk_index,
-                        "source_location": chunk.source_location,
+                        "chunk_index": idx,
+                        "source_location": loc,
                         "text": _snippet(text, match.start(), match.end()),
                     }
                 )
