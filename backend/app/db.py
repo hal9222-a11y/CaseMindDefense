@@ -19,6 +19,15 @@ def get_engine():
         # worker dies. pre_ping tests each connection before use and replaces
         # broken ones, so a drive hiccup costs one retry instead of the whole queue.
         pool_pre_ping=True,
+        # The default pool (5 + 10 overflow = 15) is too small for this app's
+        # concurrency: request handlers, the background indexer, the resume daemon,
+        # the translator, the 4s /status poll, AND the whole-chunk scans behind
+        # phone-directory / find-connections that hold a connection for seconds.
+        # Under the desktop's polling + a couple of heavy queries the pool
+        # exhausted and requests timed out — the UI read that as "server down".
+        # WAL lets these readers run concurrently, so a generous pool is safe.
+        pool_size=30,
+        max_overflow=50,
     )
 
     # This app runs many concurrent SQLite connections — request handlers, the
