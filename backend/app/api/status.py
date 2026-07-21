@@ -65,14 +65,14 @@ def status(session: Session = Depends(get_session)):
 
     current = None
     if processing:
-        # the head of the queue in the SAME order the sequential indexer uses
-        # (tier + size, not id) — ordering by id showed a .wav as "current"
-        # while the log was transcribing voice notes
-        from app.services.evidence_service import _processing_priority
-
+        # cheap approximation of "what's being worked on" — oldest processing id.
+        # Using the real _processing_priority() order here meant a LIKE-based sort
+        # over ~190k rows (~4s) on EVERY 4s poll, which is what made the desktop
+        # time out and read the backend as "down". A status hint doesn't need the
+        # exact head of the queue; ORDER BY id hits the status index and is instant.
         row = session.exec(
             select(Evidence).where(Evidence.status == "processing")
-            .order_by(*_processing_priority()).limit(1)
+            .order_by(Evidence.id).limit(1)
         ).first()
         if row is not None:
             current = {"filename": row.filename, "stage": _stage_for(row.filename)}

@@ -27,12 +27,14 @@ class Evidence(SQLModel, table=True):
     size_bytes: int = 0
     mime_type: str = "application/octet-stream"
     imported_at: datetime = Field(default_factory=utcnow)
-    status: str = "imported"
+    # indexed: at ~200k rows every WHERE status=... (the /status counts, the resume
+    # loop's queue query) full-scanned the table (~2.7s each) without this
+    status: str = Field(default="imported", index=True)
     # Hebrew translation, precomputed in the background: a local model manages
     # ~14 chars/sec, so a chat export takes an hour — it must be ready before
     # the user opens the file, not while they wait for it.
     # "" = not looked at yet | pending (part-way) | done | not_needed
-    translation_status: str = ""
+    translation_status: str = Field(default="", index=True)
     translation: str = ""
     # chunks already translated — a long document survives a restart instead of
     # starting over (and therefore never finishing)
