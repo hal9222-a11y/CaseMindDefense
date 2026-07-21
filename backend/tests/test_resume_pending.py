@@ -70,6 +70,38 @@ def test_resume_processes_a_multi_item_queue_once_each(monkeypatch):
     assert sorted(calls) == sorted(ids)   # each processed EXACTLY once, loop terminated
 
 
+def test_resume_requeues_transcription_unavailable(monkeypatch):
+    """A file marked 'transcription_unavailable' (Whisper couldn't load — usually
+    a transient GPU/drive blip) must not be stranded forever: resume requeues it
+    so it retries once the model is back."""
+    from app.db import init_db
+    from app.services import evidence_service
+
+    init_db()
+    with Session(get_engine()) as session:
+        ev = Evidence(
+            original_path="voice", stored_path="voice.opus", filename="voice.opus",
+            sha256=uuid.uuid4().hex, size_bytes=1, mime_type="audio/opus",
+            status="transcription_unavailable",
+        )
+        session.add(ev)
+        session.commit()
+        session.refresh(ev)
+        ev_id = ev.id
+
+    def stub_index(session, evidence_id):
+        row = session.get(Evidence, evidence_id)
+        row.status = "transcribed"  # Whisper is back now
+        session.add(row)
+        session.commit()
+
+    monkeypatch.setattr(evidence_service, "index_evidence", stub_index)
+
+    resume_pending_indexing()
+    with Session(get_engine()) as session:
+        assert session.get(Evidence, ev_id).status == "transcribed"  # retried, not stranded
+
+
 def test_reindex_pending_endpoint(tmp_path):
     with TestClient(app) as client:
         r = client.post("/admin/reindex-pending")

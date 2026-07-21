@@ -431,6 +431,28 @@ def resume_pending_indexing() -> int:
     done = 0
     attempted: set[int] = set()  # never retry an id within one run — no spin on a row that can't be marked failed
     io_failures = 0
+
+    # 'transcription_unavailable' means _load_whisper() returned None — almost
+    # always transient (a GPU/driver blip, or the code drive dropping so the model
+    # can't load). Those files were marked terminal and never retried, stranding
+    # real audio (on this case 692 items, 56 of them priority recordings). Requeue
+    # them once at the top of a resume: by now the model loads again; if it truly
+    # can't, they simply re-mark and wait for the next restart. ponytail: blanket
+    # requeue — a permanently dead Whisper is a whole-system failure the user sees.
+    try:
+        with Session(get_engine()) as _s:
+            stranded = _s.exec(
+                select(Evidence).where(Evidence.status == "transcription_unavailable")
+            ).all()
+            for _ev in stranded:
+                _ev.status = "processing"
+                _s.add(_ev)
+            if stranded:
+                _s.commit()
+                logger.info("requeued %d transcription_unavailable item(s) for retry", len(stranded))
+    except Exception:
+        logger.exception("could not requeue transcription_unavailable items")
+
     try:
         # The evidence DB lives on a drive that drops out intermittently; a single
         # disk I/O error here used to kill this loop silently and the whole queue
