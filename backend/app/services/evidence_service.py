@@ -16,6 +16,10 @@ from app.services import llm_service, search_index
 from app.services.ner_service import extract_entities
 from app.services.transcription_service import MEDIA_EXTENSIONS, transcribe_guarded
 from app.services.ufed_reader_service import is_ufed_reader_report
+
+# A <30KB image or any .webp is a WhatsApp sticker / thumbnail / emoji, never
+# evidentiary text — a phone dump has ~15k of them. Skip OCR on those.
+STICKER_MAX_BYTES = 30 * 1024
 from app.services.text_service import (
     IMAGE_EXTENSIONS,
     TextExtractionError,
@@ -197,6 +201,13 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
             return evidence
         chunks = media_chunks
         extraction_method = "transcription"
+    elif stored.suffix.lower() in IMAGE_EXTENSIONS and (
+        stored.suffix.lower() == ".webp" or (evidence.size_bytes or 0) < STICKER_MAX_BYTES
+    ):
+        # sticker / thumbnail / emoji — skip the OCR, land in 'no_text_found'
+        # like an OCR that found nothing. Real photos/screenshots are larger.
+        chunks = []
+        extraction_method = "sticker"
     else:
         try:
             text, extraction_method = extract_text(stored)
@@ -224,7 +235,7 @@ def index_evidence(session: Session, evidence_id: int) -> Evidence:
     # text keeps that. Best-effort — disabled/failed captioning leaves the image
     # exactly as OCR left it. Cross-lingual embeddings make the description
     # findable in Hebrew even if the model answers in English.
-    if not chunks and stored.suffix.lower() in IMAGE_EXTENSIONS:
+    if not chunks and extraction_method != "sticker" and stored.suffix.lower() in IMAGE_EXTENSIONS:
         caption = llm_service.describe_image(stored)
         if caption:
             extraction_method = "caption"  # no OCR text — the description IS the content
